@@ -10,6 +10,7 @@ var (
 	ErrAuthSignerNameMissmatch         = errors.New("auth signer name does match the zone's origin")
 	ErrSignatureSetEmpty               = errors.New("cannot verify an empty signature set")
 	ErrUnableToVerify                  = errors.New("unable to verify signature")
+	ErrVerifyFailed                    = errors.New("signature verification failed")
 	ErrInvalidTime                     = errors.New("current time is outside of the msg validity period")
 	ErrInvalidSignature                = errors.New("msg signature is invalid")
 	ErrInvalidLabelCount               = errors.New("number of labels in the rrset owner name is less the value in the rrsig rr's labels field")
