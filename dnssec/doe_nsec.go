@@ -8,11 +8,11 @@ import (
 )
 
 func (doe *denialOfExistenceNSEC) performQNameDoesNotExistProof(qname string) bool {
-	return doe.verifyQNameCovered(qname) && doe.verifyWildcardCovered(qname)
+	return !doe.empty() && (doe.verifyQNameCovered(qname) && doe.verifyWildcardCovered(qname))
 }
 
 func (doe *denialOfExistenceNSEC) performExpandedWildcardProof(qname string) bool {
-	return doe.verifyQNameCovered(qname) && !doe.verifyWildcardCovered(qname)
+	return !doe.empty() && (doe.verifyQNameCovered(qname) && !doe.verifyWildcardCovered(qname))
 }
 
 func (doe *denialOfExistenceNSEC) verifyQNameCovered(qname string) bool {

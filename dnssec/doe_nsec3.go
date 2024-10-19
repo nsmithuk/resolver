@@ -6,6 +6,9 @@ import (
 )
 
 func (doe *denialOfExistenceNSEC3) performClosestEncloserProof(name string) (optedOut, closestEncloserProof, nextCloserNameProof, wildcardProof bool) {
+	if doe.empty() {
+		return
+	}
 
 	closestEncloser, nextCloserName, ok := doe.findClosestEncloser(name)
 	if !ok {
@@ -39,6 +42,20 @@ func (doe *denialOfExistenceNSEC3) performExpandedWildcardProof(wildcardAnswerSi
 		necessary to return an NSEC3 RR that matches the closest encloser, as
 		the existence of this closest encloser is proven by the presence of
 		the expanded wildcard in the response.
+
+
+		https://datatracker.ietf.org/doc/html/rfc5155#section-8.8
+		8.8.  Validating Wildcard Answer Responses
+
+		The verified wildcard answer RRSet in the response provides the
+		validator with a (candidate) closest encloser for QNAME.  This
+		closest encloser is the immediate ancestor to the generating
+		wildcard.
+
+		Validators MUST verify that there is an NSEC3 RR that covers the
+		"next closer" name to QNAME present in the response.  This proves
+		that QNAME itself did not exist and that the correct wildcard was
+		used to generate the response.
 	*/
 
 	labelIndexs := dns.Split(wildcardAnswerSignature.name)
@@ -50,10 +67,10 @@ func (doe *denialOfExistenceNSEC3) performExpandedWildcardProof(wildcardAnswerSi
 	// The "next closer" of the immediate ancestor
 	nextCloserName := wildcardAnswerSignature.name[labelIndexs[closestEncloserIndex-1]:]
 
-	wildcardProof := doe.verifyWildcardCovered(closestEncloser)
+	wildcardProof := doe.verifyWildcardCovered(closestEncloser) || doe.verifyWildcardMatched(closestEncloser)
 	_, nextCloserNameProof := doe.verifyNextCloserNameCovered(nextCloserName)
 
-	// We need no wildcard proof (i.e. there can be a wildcard), and the nextCloserNameProof proving the original QNAME is missing.
+	// We need no DOE wildcard proof (i.e. there can be a wildcard), and the nextCloserName proving the original QNAME is missing.
 	return !wildcardProof && nextCloserNameProof
 }
 
@@ -70,6 +87,20 @@ func (doe *denialOfExistenceNSEC3) verifyWildcardCovered(closestEncloser string)
 
 		if nsec3.Cover(wildcard) {
 			wildcardProof = true
+		}
+
+	}
+
+	return
+}
+
+func (doe *denialOfExistenceNSEC3) verifyWildcardMatched(closestEncloser string) (wildcardProof bool) {
+
+	for _, nsec3 := range doe.records {
+		wildcard := "*." + closestEncloser
+
+		if nsec3.Match(wildcard) {
+			return true
 		}
 
 	}

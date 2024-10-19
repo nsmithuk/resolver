@@ -111,12 +111,12 @@ func verifyRRSETs(ctx context.Context, r *result, keys []*dns.DNSKEY) (Authentic
 
 	answerSignatures, err := authenticate(r.zone.Name(), r.msg.Answer, keys, answerSection)
 	if err != nil {
-		return Bogus, ErrBogusResultFound
+		return Bogus, fmt.Errorf("%w: %w", ErrBogusResultFound, err)
 	}
 
 	authoritySignatures, err := authenticate(r.zone.Name(), r.msg.Ns, keys, authoritySection)
 	if err != nil {
-		return Bogus, ErrBogusResultFound
+		return Bogus, fmt.Errorf("%w: %w", ErrBogusResultFound, err)
 	}
 
 	recordSignatures := slices.Concat(answerSignatures, authoritySignatures)
