@@ -54,7 +54,7 @@ func recordsHaveTheSameOwner(rr []dns.RR) bool {
 	return true
 }
 
-// wildcardName replaces the first label with *
+// wildcardName replaces the first label with `*`
 func wildcardName(name string) string {
 	labelIndexes := dns.Split(name)
 	if len(labelIndexes) < 2 {

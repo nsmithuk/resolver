@@ -32,12 +32,12 @@ const (
 	authoritySection section = false
 )
 
-type output uint8
-
-const (
-	Continue output = iota
-	IsSecure
-	IsBogus
-	IsIndeterminate
-	IsError
-)
+//type output uint8
+//
+//const (
+//	Continue output = iota
+//	IsSecure
+//	IsBogus
+//	IsIndeterminate
+//	IsError
+//)

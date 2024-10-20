@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-/*
-	hash(example.com.) = 111NOTAB271SNH4EA8ESDKBF1C2QINH1
-	hash(*.example.com.) = 3MFPR9I7C49K59BM8VU2HM71CCR7BH0B
-	hash(test.example.com.) = L72QU4B0R4USH96QN17VTCD8395QILEQ
-
-	Generated with:
-	digest := dns.HashName(host, dns.SHA1, uint16(2), "abcdef")
-*/
-
 type testNsec3RRSets struct {
 	key []*dns.DNSKEY
 
@@ -31,6 +22,9 @@ func getTestNsec3RRSets() testNsec3RRSets {
 		hash(example.com.) = 111NOTAB271SNH4EA8ESDKBF1C2QINH1
 		hash(*.example.com.) = 3MFPR9I7C49K59BM8VU2HM71CCR7BH0B
 		hash(test.example.com.) = L72QU4B0R4USH96QN17VTCD8395QILEQ
+
+		Generated with:
+		digest := dns.HashName(domain, dns.SHA1, uint16(2), "abcdef")
 	*/
 
 	r := testNsec3RRSets{}
@@ -288,4 +282,79 @@ func TestDenialOfExistenceNSEC3_WildcardProof(t *testing.T) {
 	if verified {
 		t.Error("we expect this to fail as there's doe for the wildcard record")
 	}
+}
+
+func TestDenialOfExistenceNSEC3_Optout(t *testing.T) {
+
+	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner Name, Type Bit Maps
+
+	// We set the OptOut flag to 1 on the below.
+
+	// The ClosestEncloser
+	closestEncloser := []dns.RR{
+		// example.com (apex)
+		newRR("111NOTAB271SNH4EA8ESDKBF1C2QINH1.example.com. 3600 IN NSEC3 1 1 2 ABCDEF 211NOTAB271SNH4EA8ESDKBF1C2QINH1 SOA RRSIG"),
+	}
+
+	// Covers `test.`
+	nextCloserName := []dns.RR{
+		// test. == L72QU4B0R4USH96QN17VTCD8395QILEQ
+		// So we need two hashes that cover that hash.
+		newRR("K72QU4B0R4USH96QN17VTCD8395QILEQ.example.com. 3600 IN NSEC3 1 1 2 ABCDEF M72QU4B0R4USH96QN17VTCD8395QILEQ A RRSIG"),
+	}
+
+	key := testEcKey()
+	closestEncloser = append(closestEncloser, key.sign(closestEncloser, 0, 0))
+	nextCloserName = append(nextCloserName, key.sign(nextCloserName, 0, 0))
+
+	set, err := authenticate(zoneName, slices.Concat(nextCloserName, closestEncloser), []*dns.DNSKEY{key.key}, answerSection)
+	if err != nil || !set.Valid() {
+		panic("cannot setup test")
+	}
+
+	nsec3 := newDenialOfExistenceNSEC3(context.Background(), zoneName, set)
+
+	optedOut, _, _, _ := nsec3.performClosestEncloserProof("test.example.com.")
+	if !optedOut {
+		t.Error("we expect the proof to to state that they're opted-out")
+	}
+
+}
+
+func TestDenialOfExistenceNSEC3_InvalidValues(t *testing.T) {
+
+	// NSEC3 records that have an invalid hash value, or an invalid Flags field, must be ignored.
+
+	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner Name, Type Bit Maps
+
+	// The only allowed Hash Algorithm value is 1. Here we change it to 5.
+	closestEncloser := []dns.RR{
+		// example.com (apex)
+		newRR("111NOTAB271SNH4EA8ESDKBF1C2QINH1.example.com. 3600 IN NSEC3 5 0 2 ABCDEF 211NOTAB271SNH4EA8ESDKBF1C2QINH1 SOA RRSIG"),
+	}
+
+	// The only allowed Flags values are 0 or 1. Here we change it to 5. Note that we've already tested 0 and 1 o other tests.
+	nextCloserName := []dns.RR{
+		// test. == L72QU4B0R4USH96QN17VTCD8395QILEQ
+		// So we need two hashes that cover that hash.
+		newRR("K72QU4B0R4USH96QN17VTCD8395QILEQ.example.com. 3600 IN NSEC3 1 5 2 ABCDEF M72QU4B0R4USH96QN17VTCD8395QILEQ A RRSIG"),
+	}
+
+	key := testEcKey()
+	closestEncloser = append(closestEncloser, key.sign(closestEncloser, 0, 0))
+	nextCloserName = append(nextCloserName, key.sign(nextCloserName, 0, 0))
+
+	set, err := authenticate(zoneName, slices.Concat(nextCloserName, closestEncloser), []*dns.DNSKEY{key.key}, answerSection)
+	if err != nil || !set.Valid() {
+		panic("cannot setup test")
+	}
+
+	nsec3 := newDenialOfExistenceNSEC3(context.Background(), zoneName, set)
+
+	if !nsec3.empty() {
+		t.Error("we expect there to be no nsec3 records to check as both that were passed should be ignored")
+	}
+
+	// We've tested in previous tests that proofs fail if nsec3.empty() is true.
+
 }

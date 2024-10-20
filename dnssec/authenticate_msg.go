@@ -282,8 +282,6 @@ func validateNegativeResponse(ctx context.Context, r *result) (AuthenticationRes
 				return Secure, nil
 			}
 
-			// TODO: Do I need to do anything special for wildcards here, like with NSEC3?
-
 			if nsec.performQNameDoesNotExistProof(qname) {
 				r.denialOfExistence = NsecNxDomain
 				return Secure, nil
