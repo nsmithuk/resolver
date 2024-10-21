@@ -37,23 +37,21 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 
 		lastResult := a.results[i-1]
 
-		if lastResult.denialOfExistence == Nsec3OptOut {
-			// If the denial of existence was an opt-out, the best we can conclude is Insecure.
+		switch lastResult.denialOfExistence {
+		case Nsec3OptOut, NsecMissingDS, Nsec3MissingDS:
 			return Insecure, lastResult.denialOfExistence, r.err
+
+		case NsecNoData, Nsec3NoData:
+			lastResultQ := lastResult.msg.Question[0]
+
+			// This is only valid if we'd specifically queried for the DS records we needed.
+			// i.e. The Question we have the DOE for should match the zone apex for the next result (`r`).
+			if lastResultQ.Qtype == dns.TypeDS && dns.CanonicalName(lastResultQ.Name) == dns.CanonicalName(r.zone.Name()) {
+				return Insecure, lastResult.denialOfExistence, r.err
+			}
+
+			// NsecNxDomain & Nsec3NxDomain cannot be valid here as a record owner must exist if we've been delegated to it.
 		}
-
-		// We expect the NSEC proof for a missing DS.
-		if lastResult.denialOfExistence == NsecMissingDS || lastResult.denialOfExistence == Nsec3MissingDS {
-			return Insecure, lastResult.denialOfExistence, r.err
-		}
-
-		// TODO: is lastResult.denialOfExistence != NotFound correct?
-		// If it's NODATA, or NXDOMAIN, and it was a QType of DS, then perhaps that's also not Bogus?
-
-		// We'll accept any form of DOE. (Probably not correct)
-		//if lastResult.denialOfExistence != NotFound {
-		//	return Insecure, lastResult.denialOfExistence, r.err
-		//}
 
 		return Bogus, lastResult.denialOfExistence, r.err
 	}

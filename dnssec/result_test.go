@@ -56,17 +56,169 @@ func TestResult_BogusRecords(t *testing.T) {
 
 }
 
-func TestResult_DoeMidChain(t *testing.T) {
+func TestResult_BreakInChainExpected(t *testing.T) {
 
-	// We test when a DOE record is found mid-chain. i.e. in a result that's not the last result.
-	// Mid-chain DOE records are linked to missing DS records.
+	// These tests focus on what happens when a result state moves from Secure to Insecure part way through a chain.
+	// We need to ensure that DOE exists for the DS records, for that to be valid.
+
+	// These three states show that valid DOE was found at the delegation point.
+
+	for _, expectedDOE := range []DenialOfExistenceState{Nsec3OptOut, NsecMissingDS, Nsec3MissingDS} {
+		a := NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
+
+		// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure, denialOfExistence: expectedDOE})
+		a.results = append(a.results, &result{state: Insecure})
+
+		state, doe, err := a.Result()
+		if err != nil {
+			t.Error("unexpected error")
+		}
+		if doe != expectedDOE {
+			t.Error("unexpected doe")
+		}
+		if state != Insecure {
+			t.Error("unexpected state")
+		}
+	}
+
+}
+
+func TestResult_BreakInChainValidated(t *testing.T) {
+
+	// These tests focus on what happens when a result state moves from Secure to Insecure part way through a chain.
+	// We need to ensure that DOE exists for the DS records, for that to be valid.
+
+	// These two DOE states are only accepted if we'd explicitly queried for the DS records at the parent zone.
+
+	for _, expectedDOE := range []DenialOfExistenceState{NsecNoData, Nsec3NoData} {
+		a := NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
+
+		// Used to return the zone apex of the Insecure Result.
+		zone := &wrappedZone{name: "EXAMPLE.COM."}
+
+		// Used to lookup the question details of the last Secure result.
+		msg := &dns.Msg{Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeDS}}}
+
+		// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure, denialOfExistence: expectedDOE, msg: msg})
+		a.results = append(a.results, &result{state: Insecure, zone: zone})
+		a.results = append(a.results, &result{state: Insecure})
+
+		state, doe, err := a.Result()
+		if err != nil {
+			t.Error("unexpected error")
+		}
+		if doe != expectedDOE {
+			t.Error("unexpected doe")
+		}
+		if state != Insecure {
+			t.Error("unexpected state")
+		}
+
+		//---
+
+		// If the query was not for a DS record, it should be Bogus.
+		// We've changed it to an A record.
+
+		a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
+
+		// Used to return the zone apex of the Insecure Result.
+		zone = &wrappedZone{name: "example.com."}
+
+		// Used to lookup the question details of the last Secure result.
+		msg = &dns.Msg{Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeA}}}
+
+		// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure, denialOfExistence: expectedDOE, msg: msg})
+		a.results = append(a.results, &result{state: Insecure, zone: zone})
+		a.results = append(a.results, &result{state: Insecure})
+
+		state, doe, err = a.Result()
+		if err != nil {
+			t.Error("unexpected error")
+		}
+		if doe != expectedDOE {
+			t.Error("unexpected doe")
+		}
+		if state != Bogus {
+			t.Error("unexpected state")
+		}
+
+		//---
+
+		// If the Insure zone's apex does not match the QName of the previous question, it should be Bogus.
+		// We've changed the question domain to `.net`.
+
+		a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
+
+		// Used to return the zone apex of the Insecure Result.
+		zone = &wrappedZone{name: "example.com."}
+
+		// Used to lookup the question details of the last Secure result.
+		msg = &dns.Msg{Question: []dns.Question{{Name: "example.net.", Qtype: dns.TypeDS}}}
+
+		// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure, denialOfExistence: expectedDOE, msg: msg})
+		a.results = append(a.results, &result{state: Insecure, zone: zone})
+		a.results = append(a.results, &result{state: Insecure})
+
+		state, doe, err = a.Result()
+		if err != nil {
+			t.Error("unexpected error")
+		}
+		if doe != expectedDOE {
+			t.Error("unexpected doe")
+		}
+		if state != Bogus {
+			t.Error("unexpected state")
+		}
+	}
+
+}
+
+func TestResult_BreakInChaiInvalid(t *testing.T) {
+
+	// These three DOE states are never valid in this situation.
+	for _, expectedDOE := range []DenialOfExistenceState{NotFound, NsecNxDomain, Nsec3NxDomain} {
+		a := NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
+
+		// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure})
+		a.results = append(a.results, &result{state: Secure, denialOfExistence: expectedDOE})
+		a.results = append(a.results, &result{state: Insecure})
+		a.results = append(a.results, &result{state: Insecure})
+
+		state, doe, err := a.Result()
+		if err != nil {
+			t.Error("unexpected error")
+		}
+		if doe != expectedDOE {
+			t.Error("unexpected doe")
+		}
+		if state != Bogus {
+			t.Error("unexpected state")
+		}
+	}
+
+	//---
+
+	// The default denialOfExistence is NotFound, but we'll sense check that here.
 
 	a := NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
 
 	// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
 	a.results = append(a.results, &result{state: Secure})
 	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure, denialOfExistence: Nsec3OptOut})
+	a.results = append(a.results, &result{state: Secure})
 	a.results = append(a.results, &result{state: Insecure})
 	a.results = append(a.results, &result{state: Insecure})
 
@@ -74,139 +226,6 @@ func TestResult_DoeMidChain(t *testing.T) {
 	if err != nil {
 		t.Error("unexpected error")
 	}
-	if doe != Nsec3OptOut {
-		t.Error("unexpected doe")
-	}
-	if state != Insecure {
-		t.Error("unexpected state")
-	}
-
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure, denialOfExistence: NsecMissingDS})
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Insecure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
-	if doe != NsecMissingDS {
-		t.Error("unexpected doe")
-	}
-	if state != Insecure {
-		t.Error("unexpected state")
-	}
-
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure, denialOfExistence: Nsec3MissingDS})
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Insecure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
-	if doe != Nsec3MissingDS {
-		t.Error("unexpected doe")
-	}
-	if state != Insecure {
-		t.Error("unexpected state")
-	}
-
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// NXDOMAIN and NODATA DOE is not valid mid-chain.
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure, denialOfExistence: NsecNoData})
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Insecure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
-	if doe != NsecNoData {
-		t.Error("unexpected doe")
-	}
-	if state != Bogus {
-		t.Error("unexpected state")
-	}
-
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// NXDOMAIN and NODATA DOE is not valid mid-chain.
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure, denialOfExistence: Nsec3NoData})
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Insecure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
-	if doe != Nsec3NoData {
-		t.Error("unexpected doe")
-	}
-	if state != Bogus {
-		t.Error("unexpected state")
-	}
-
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// NXDOMAIN and NODATA DOE is not valid mid-chain.
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure, denialOfExistence: Nsec3NxDomain})
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Insecure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
-	if doe != Nsec3NxDomain {
-		t.Error("unexpected doe")
-	}
-	if state != Bogus {
-		t.Error("unexpected state")
-	}
-
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// When the state moves from Secure to Insecure, we need a DOE result on the last Secure result.
-	// When this isn't the case, we expect the result to be Bogus.
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Insecure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
 	if doe != NotFound {
 		t.Error("unexpected doe")
 	}
@@ -214,26 +233,4 @@ func TestResult_DoeMidChain(t *testing.T) {
 		t.Error("unexpected state")
 	}
 
-	//---
-
-	a = NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
-
-	// If the first result is not Secure, we expect the overall conclusion to be whatever
-	// the first result is, regardless of what comes after it (except if any result is Bogus).
-	a.results = append(a.results, &result{state: Insecure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-	a.results = append(a.results, &result{state: Secure})
-
-	state, doe, err = a.Result()
-	if err != nil {
-		t.Error("unexpected error")
-	}
-	if doe != NotFound {
-		t.Error("unexpected doe")
-	}
-	if state != Insecure {
-		t.Error("unexpected state")
-	}
 }
