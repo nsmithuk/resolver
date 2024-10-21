@@ -23,38 +23,38 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 
 	//-----------------------------------------------------------
 	// If the chain moved from Secure to Insecure,
-	// there must be Denial of Existence - otherwise Bogus.
+	// there must be Denial of Existence on the DS records, otherwise Bogus.
 
-	for i, r := range a.results {
-		if r.state == Secure {
+	for i, current := range a.results {
+		if current.state == Secure {
 			continue
 		}
 
 		if i == 0 {
 			// If the first result was not secure, we might as well give up now.
-			return r.state, r.denialOfExistence, r.err
+			return current.state, current.denialOfExistence, current.err
 		}
 
-		lastResult := a.results[i-1]
+		previous := a.results[i-1]
 
-		switch lastResult.denialOfExistence {
+		switch previous.denialOfExistence {
 		case Nsec3OptOut, NsecMissingDS, Nsec3MissingDS:
-			return Insecure, lastResult.denialOfExistence, r.err
+			return Insecure, previous.denialOfExistence, current.err
 
 		case NsecNoData, Nsec3NoData:
-			lastResultQ := lastResult.msg.Question[0]
+			previousQ := previous.msg.Question[0]
 
 			// This is only valid if we'd specifically queried for the DS records we needed.
-			// i.e. The Question we have the DOE for should match the zone apex for the next result (`r`).
-			if lastResultQ.Qtype == dns.TypeDS && dns.CanonicalName(lastResultQ.Name) == dns.CanonicalName(r.zone.Name()) {
-				return Insecure, lastResult.denialOfExistence, r.err
+			// i.e. The Question we have the DOE for should match the zone apex for the current result's zone.
+			if previousQ.Qtype == dns.TypeDS && dns.CanonicalName(previousQ.Name) == dns.CanonicalName(current.zone.Name()) {
+				return Insecure, previous.denialOfExistence, current.err
 			}
 
 			// NsecNxDomain & Nsec3NxDomain are not accepted as the Record Owner must exist
 			// if we've been delegated to its ancestor.
 		}
 
-		return Bogus, lastResult.denialOfExistence, r.err
+		return Bogus, previous.denialOfExistence, current.err
 	}
 
 	//-----------------------------------------------------------
@@ -66,23 +66,26 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 		return last.state, last.denialOfExistence, last.err
 	}
 
-	if last.denialOfExistence == Nsec3OptOut {
+	switch last.denialOfExistence {
+	case Nsec3OptOut:
 		return Insecure, last.denialOfExistence, last.err
-	}
-
-	// If there was DOE found...
-	if last.denialOfExistence != NotFound {
+	case NsecNxDomain, Nsec3NxDomain, NsecNoData, Nsec3NoData:
 		return Secure, last.denialOfExistence, last.err
+	default:
+		return Bogus, last.denialOfExistence, last.err
+	case NotFound:
+		// We carry on...
 	}
 
 	//-----------------------------------------------------------
 	// We now expect a positive answer
 
-	// We should see no SOA.
+	// We should see no SOA in the authority section.
 	if recordsOfTypeExist(last.msg.Ns, dns.TypeSOA) {
 		return Bogus, last.denialOfExistence, last.err
 	}
 
+	// We expect an answer matching the QNAme, and the QType or CNAME.
 	if len(extractRecordsOfNameAndType(last.msg.Answer, a.question.Name, a.question.Qtype)) > 0 {
 		return Secure, last.denialOfExistence, last.err
 	}

@@ -7,7 +7,7 @@ const (
 	Insecure
 	Secure
 	Bogus
-	Indeterminate
+	//Indeterminate // I'm not sure if we need this.
 )
 
 type DenialOfExistenceState uint8
