@@ -187,6 +187,9 @@ func TestResult_BreakInChainValidated(t *testing.T) {
 func TestResult_BreakInChaiInvalid(t *testing.T) {
 
 	// These three DOE states are never valid in this situation.
+	// NotFound as that means we have no evidence that the Secure chain should have stopped.
+	// NsecNxDomain & Nsec3NxDomain don't make sense as they must exist if we've been delegated to its ancestor.
+
 	for _, expectedDOE := range []DenialOfExistenceState{NotFound, NsecNxDomain, Nsec3NxDomain} {
 		a := NewAuth(context.Background(), &dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
 

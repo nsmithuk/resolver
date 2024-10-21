@@ -50,7 +50,8 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 				return Insecure, lastResult.denialOfExistence, r.err
 			}
 
-			// NsecNxDomain & Nsec3NxDomain cannot be valid here as a record owner must exist if we've been delegated to it.
+			// NsecNxDomain & Nsec3NxDomain are not accepted as the Record Owner must exist
+			// if we've been delegated to its ancestor.
 		}
 
 		return Bogus, lastResult.denialOfExistence, r.err
