@@ -9,7 +9,7 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 
 	// If we have no answers at all we have nothing to go on, thus we don't know what the status is.
 	if len(a.results) == 0 {
-		return Unknown, NotFound, nil
+		return Unknown, NotFound, ErrNoResults
 	}
 
 	//-----------------------------------------------------------
@@ -37,22 +37,23 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 
 		lastResult := a.results[i-1]
 
-		// TODO: is lastResult.denialOfExistence != NotFound correct?
-
-		//if lastResult.denialOfExistence == Nsec3OptOut {
-		//	// If the denial of existence was an opt-out, the best we can conclude is Insecure.
-		//	return Insecure, lastResult.denialOfExistence, r.err
-		//}
-		//
-		//// We expect the NSEC proof for a missing DS.
-		//if lastResult.denialOfExistence == NsecMissingDS || lastResult.denialOfExistence == Nsec3MissingDS {
-		//	return Insecure, lastResult.denialOfExistence, r.err
-		//}
-
-		// We'll accept any form of DOE.
-		if lastResult.denialOfExistence != NotFound {
+		if lastResult.denialOfExistence == Nsec3OptOut {
+			// If the denial of existence was an opt-out, the best we can conclude is Insecure.
 			return Insecure, lastResult.denialOfExistence, r.err
 		}
+
+		// We expect the NSEC proof for a missing DS.
+		if lastResult.denialOfExistence == NsecMissingDS || lastResult.denialOfExistence == Nsec3MissingDS {
+			return Insecure, lastResult.denialOfExistence, r.err
+		}
+
+		// TODO: is lastResult.denialOfExistence != NotFound correct?
+		// If it's NODATA, or NXDOMAIN, and it was a QType of DS, then perhaps that's also not Bogus?
+
+		// We'll accept any form of DOE. (Probably not correct)
+		//if lastResult.denialOfExistence != NotFound {
+		//	return Insecure, lastResult.denialOfExistence, r.err
+		//}
 
 		return Bogus, lastResult.denialOfExistence, r.err
 	}

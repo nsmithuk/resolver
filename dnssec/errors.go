@@ -23,6 +23,8 @@ var (
 
 	ErrSignerNameNotParentOfQName = errors.New("the signer name is not a parent of the qname")
 
+	ErrNoResults = errors.New("no results have been processed")
+
 	ErrBogusResultFound        = errors.New("we've deemed the result bogus")
 	ErrBogusDoeRecordsNotFound = errors.New("denial of existence records missing")
 )
