@@ -55,10 +55,10 @@ func (ss signatures) Valid() bool {
 	return ss.Verify() == nil
 }
 
-// extractDSRecords returns all DS records from within a signature set.
+// extractDSRecords returns all DS records from signatures with a rrtype of DS.
 func (ss signatures) extractDSRecords() []*dns.DS {
 	parentDSRecords := make([]*dns.DS, 0)
-	for _, s := range ss {
+	for _, s := range ss.filterOnType(dns.TypeDS) {
 		parentDSRecords = append(parentDSRecords, extractRecords[*dns.DS](s.rrset)...)
 	}
 	return parentDSRecords
