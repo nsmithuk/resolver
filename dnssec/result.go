@@ -63,6 +63,7 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 	last := a.results[len(a.results)-1]
 
 	if last.state != Secure {
+		// TODO: check if this can ever be called. I suspect not.
 		return last.state, last.denialOfExistence, last.err
 	}
 

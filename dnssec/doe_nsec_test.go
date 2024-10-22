@@ -188,3 +188,45 @@ func TestDenialOfExistenceNSEC_Wildcard(t *testing.T) {
 	}
 
 }
+
+func TestDenialOfExistenceNSEC_CanonicalCmp(t *testing.T) {
+
+	// Example domains to sort
+	domains := []string{
+		"z.example",
+		"z.example",
+		`xxx.qazz.uk`,
+		"yljkjljk.a.example",
+		"Z.a.example",
+		`\200.z.example`,
+		"zABC.a.EXAMPLE",
+		`t\100.example`,
+		`\001.z.example`,
+		"*.z.example",
+		`\000.xxx.qazz.uk`,
+		"*.Z.a.example",
+		"example",
+	}
+
+	slices.SortFunc(domains, canonicalCmp)
+
+	expected := []string{
+		"example",
+		"yljkjljk.a.example",
+		"Z.a.example",
+		"*.Z.a.example",
+		"zABC.a.EXAMPLE",
+		`t\100.example`,
+		"z.example",
+		"z.example",
+		`\001.z.example`,
+		"*.z.example",
+		`\200.z.example`,
+		`xxx.qazz.uk`,
+		`\000.xxx.qazz.uk`,
+	}
+
+	if !slices.Equal(expected, domains) {
+		t.Error("domain ordering does not match")
+	}
+}
