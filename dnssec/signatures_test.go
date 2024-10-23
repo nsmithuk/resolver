@@ -10,17 +10,27 @@ import (
 func TestSignatures_FilterOnTypeAndExtractDSRecords(t *testing.T) {
 
 	ds := newRR("example.com. 54775 IN DS 370 13 2 BE74359954660069D5C63D200C39F5603827D7DD02B56F120EE9F3A8 6764247C")
+	nsec := newRR("test.example.com. 3600 IN NSEC \000.test.example.com. A RRSIG NSEC")
+	nsec3 := newRR("L72QU4B0R4USH96QN17VTCD8395QILEQ.example.com. 3600 IN NSEC3 1 0 2 ABCDEF T0B6SHHJ0JQRI032RVVLMCGGNHCVF5UM A RRSIG")
+
 	expectedDS := []*dns.DS{ds.(*dns.DS)}
+	expectedNSEC := []*dns.NSEC{nsec.(*dns.NSEC)}
+	expectedNSEC3 := []*dns.NSEC3{nsec3.(*dns.NSEC3)}
 
 	set := signatures{
 		{
 			rtype: dns.TypeA,
 		},
 		{
-			rtype: dns.TypeNSEC3,
+			rtype: dns.TypeA,
+		},
+		{
+			rtype: dns.TypeNSEC,
+			rrset: []dns.RR{nsec},
 		},
 		{
 			rtype: dns.TypeNSEC3,
+			rrset: []dns.RR{nsec3},
 		},
 		{
 			rtype: dns.TypeDS,
@@ -32,10 +42,10 @@ func TestSignatures_FilterOnTypeAndExtractDSRecords(t *testing.T) {
 		},
 	}
 
-	if len(set.filterOnType(dns.TypeA)) != 1 {
+	if len(set.filterOnType(dns.TypeA)) != 2 {
 		t.Errorf("expected 1 RR got %d", len(set.filterOnType(dns.TypeA)))
 	}
-	if len(set.filterOnType(dns.TypeNSEC3)) != 2 {
+	if len(set.filterOnType(dns.TypeNSEC3)) != 1 {
 		t.Errorf("expected 1 RR got %d", len(set.filterOnType(dns.TypeNSEC3)))
 	}
 	if len(set.filterOnType(dns.TypeDS)) != 1 {
@@ -49,7 +59,14 @@ func TestSignatures_FilterOnTypeAndExtractDSRecords(t *testing.T) {
 		t.Errorf("expected DS records to be extracted but got %v", dsSet.extractDSRecords())
 	}
 	if !slices.Equal(set.extractDSRecords(), expectedDS) {
-		t.Errorf("expected DS records to be extracted but got %v", dsSet.extractDSRecords())
+		t.Errorf("expected DS records to be extracted but got %v", set.extractDSRecords())
+	}
+
+	if !slices.Equal(set.extractNSECRecords(), expectedNSEC) {
+		t.Errorf("expected NSEC records to be extracted but got %v", set.extractNSECRecords())
+	}
+	if !slices.Equal(set.extractNSEC3Records(), expectedNSEC3) {
+		t.Errorf("expected NSEC3 records to be extracted but got %v", set.extractNSEC3Records())
 	}
 
 }

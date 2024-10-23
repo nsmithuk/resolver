@@ -46,6 +46,10 @@ func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 		if !dns.IsSubDomain(last.zone.Name(), zone.Name()) {
 			return fmt.Errorf("%w: last zone:[%s] current zone:[%s]", ErrNotSubdomain, last.zone.Name(), zone.Name())
 		}
+
+		if namesEqual(last.zone.Name(), zone.Name()) {
+			return fmt.Errorf("%w: last result must be a child of the previous result; they cannot be the same. both are %s", ErrSameName, zone.Name())
+		}
 	}
 
 	rrsigs := extractRecords[*dns.RRSIG](slices.Concat(msg.Answer, msg.Ns))
