@@ -8,18 +8,20 @@ import (
 )
 
 func NewAuth(ctx context.Context, question dns.Question) *Authenticator {
+	// Function map. Allows overriding for testing.
+	v := &verifier{
+		verifyDNSKEYs:              verifyDNSKEYs,
+		verifyRRSETs:               verifyRRSETs,
+		validateDelegatingResponse: validateDelegatingResponse,
+		validatePositiveResponse:   validatePositiveResponse,
+		validateNegativeResponse:   validateNegativeResponse,
+	}
+
 	return &Authenticator{
 		ctx:      ctx,
 		question: question,
 		results:  make([]*result, 0, 5),
-		verifier: &verifier{
-			// Function map. Allows overriding for testing.
-			verifyDNSKEYs:              verifyDNSKEYs,
-			verifyRRSETs:               verifyRRSETs,
-			validateDelegatingResponse: validateDelegatingResponse,
-			validatePositiveResponse:   validatePositiveResponse,
-			validateNegativeResponse:   validateNegativeResponse,
-		},
+		verify:   v.verify,
 	}
 }
 
@@ -80,7 +82,7 @@ func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 		}
 	}
 
-	state, r, err := a.verifier.verify(a.ctx, zone, msg, last.dsRecords)
+	state, r, err := a.verify(a.ctx, zone, msg, last.dsRecords)
 
 	a.results = append(a.results, r)
 

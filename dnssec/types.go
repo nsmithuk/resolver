@@ -13,8 +13,8 @@ type Zone interface {
 type Authenticator struct {
 	ctx      context.Context
 	question dns.Question
-	verifier *verifier
 	results  []*result
+	verify   func(ctx context.Context, zone Zone, msg *dns.Msg, dsRecordsFromParent []*dns.DS) (AuthenticationResult, *result, error)
 }
 
 type input struct {
