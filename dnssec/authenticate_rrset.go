@@ -50,7 +50,7 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 			// RR to use to authenticate the signature, and it MUST try each
 			// matching DNSKEY RR until either the signature is validated or the
 			// validator has run out of matching public keys to try.
-			// i.e. Same owner, Flags, Protocol, Algorithm and KeyTag.
+			// i.e. A key can have the same owner, Flags, Protocol, Algorithm and KeyTag.
 
 			if key.Algorithm == rrsig.Algorithm && key.KeyTag() == rrsig.KeyTag && dns.CanonicalName(key.Header().Name) == dns.CanonicalName(rrsig.SignerName) {
 
@@ -87,7 +87,7 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 
 	// So the number of name/Type combinations should equal the number of signatures we have.
 	for _, rrset := range rrsets {
-		// We don't sign NS records
+		// We don't sign NS records in the authority section, and we don't sign rrsig records.
 		if rrset.Header().Rrtype == dns.TypeRRSIG || (section == authoritySection && rrset.Header().Rrtype == dns.TypeNS) {
 			continue
 		}

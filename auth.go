@@ -26,7 +26,7 @@ func (a *authenticator) addResponse(z *zone, msg *dns.Msg) error {
 	//err := a.auth.AddResponse(&authZoneWrapper{ctx: a.ctx, zone: z}, msg)
 	//
 	//if err != nil {
-	//	var missing *dnssec.MissingDSRecord
+	//	var missing *dnssec.MissingDSRecordError
 	//	if errors.As(err, &missing) {
 	//		name := missing.RName()
 	//		//return fmt.Errorf("need to fix rrname issue: %s", name)
@@ -45,7 +45,7 @@ func (a *authenticator) addResponseWhilstFixingMissingRecords(z *zone, msg *dns.
 	err := a.auth.AddResponse(&authZoneWrapper{ctx: a.ctx, zone: z}, msg)
 
 	if err != nil {
-		var missing *dnssec.MissingDSRecord
+		var missing *dnssec.MissingDSRecordError
 		if errors.As(err, &missing) {
 			name := missing.RName()
 			return a.lookupDSRecordAndRetry(z, name, msg, iteration)

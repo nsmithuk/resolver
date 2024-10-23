@@ -11,22 +11,16 @@ func NewAuth(ctx context.Context, question dns.Question) *Authenticator {
 	return &Authenticator{
 		ctx:      ctx,
 		question: question,
-		//processing: &sync.WaitGroup{},
-		//queue:      make(chan input, 8),
-		results: make([]*result, 0, 5),
+		results:  make([]*result, 0, 5),
+		verifier: &verifier{
+			// Function map. Allows overriding for testing.
+			verifyDNSKEYs:              verifyDNSKEYs,
+			verifyRRSETs:               verifyRRSETs,
+			validateDelegatingResponse: validateDelegatingResponse,
+			validatePositiveResponse:   validatePositiveResponse,
+			validateNegativeResponse:   validateNegativeResponse,
+		},
 	}
-}
-
-type MissingDSRecord struct {
-	name string
-}
-
-func (e *MissingDSRecord) RName() string {
-	return e.name
-}
-
-func (e *MissingDSRecord) Error() string {
-	return fmt.Sprintf("missing DS record: %s", e.name)
 }
 
 func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
@@ -80,14 +74,13 @@ func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 
 			// We expect the SignerName of the latest RRSIG to be the Owner Name of the last DS record.
 			// If it's not, we're missing a DS record.
-			// We return a MissingDSRecord error, which includes the next expect record name.
+			// We return a MissingDSRecordError error, which includes the next expect record name.
 			// The caller should endeavour to find and pass in the missing records. Then re-try this record.
-			return &MissingDSRecord{signerName}
+			return &MissingDSRecordError{signerName}
 		}
 	}
 
-	//r, err := a.validateChainAndProcess(input{zone, msg}, last, 0)
-	state, r, err := a.process(input{zone, msg}, last.dsRecords)
+	state, r, err := a.verifier.verify(a.ctx, zone, msg, last.dsRecords)
 
 	a.results = append(a.results, r)
 
@@ -99,7 +92,7 @@ func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 
 	if err != nil {
 		// Any errors here are for debugging only.
-		go Debug(fmt.Errorf("error processing response: %w", err).Error())
+		Debug(fmt.Errorf("error processing response: %w", err).Error())
 		if r != nil {
 			r.err = err
 		}

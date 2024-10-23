@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-/*
-	- Broadly we'll avoid just re-testing things that miekg/dns already tests. We'll focus on our logic.
-*/
-
 func TestAuthenticate_ValidRSA(t *testing.T) {
 	rrset := []dns.RR{
 		newRR("example.com. 3600 IN MX 10 mx1.example.com."),
@@ -513,7 +509,7 @@ PrivateKey: ho9mEVla4jjpbC5DoebVqsmvqWtFc074kENkCW86gPg=`,
 
 	if set[0].err != nil {
 		// This is worth checking as it will, at times, not be nil as it cycles through the keys.
-		// But we exlect it to be nil by the end of the process.
+		// But we exlect it to be nil by the end of the verify.
 		t.Error("expected signature error to be nil")
 	}
 }

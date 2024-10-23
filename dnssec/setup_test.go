@@ -14,6 +14,24 @@ import (
 const DnskeyFlagCsk = 257
 const zoneName = "example.com."
 
+//---
+
+type mockZone struct {
+	name string
+	set  []dns.RR
+	err  error
+}
+
+func (t *mockZone) Name() string {
+	return t.name
+}
+
+func (t *mockZone) GetDNSKEYRecords() ([]dns.RR, error) {
+	return t.set, t.err
+}
+
+//---
+
 func newRR(s string) dns.RR {
 	rr, err := dns.NewRR(s)
 	if err != nil {

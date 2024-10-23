@@ -1,6 +1,9 @@
 package dnssec
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrNoParentDSRecords               = errors.New("no DS records passed")
@@ -29,3 +32,15 @@ var (
 	ErrBogusResultFound        = errors.New("we've deemed the result bogus")
 	ErrBogusDoeRecordsNotFound = errors.New("denial of existence records missing")
 )
+
+type MissingDSRecordError struct {
+	name string
+}
+
+func (e *MissingDSRecordError) RName() string {
+	return e.name
+}
+
+func (e *MissingDSRecordError) Error() string {
+	return fmt.Sprintf("missing DS record: %s", e.name)
+}

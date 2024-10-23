@@ -4,15 +4,16 @@ import (
 	"context"
 	"fmt"
 	"github.com/miekg/dns"
+	"github.com/nsmithuk/resolver/dnssec/doe"
 	"slices"
 	"strings"
 )
 
-func (a *Authenticator) process(in input, dsRecordsFromParent []*dns.DS) (AuthenticationResult, *result, error) {
+func (v verifier) verify(ctx context.Context, zone Zone, msg *dns.Msg, dsRecordsFromParent []*dns.DS) (AuthenticationResult, *result, error) {
 	r := &result{
-		name: in.zone.Name(),
-		zone: in.zone,
-		msg:  in.msg,
+		name: zone.Name(),
+		zone: zone,
+		msg:  msg,
 	}
 
 	if len(dsRecordsFromParent) == 0 {
@@ -26,35 +27,34 @@ func (a *Authenticator) process(in input, dsRecordsFromParent []*dns.DS) (Authen
 	// Positive Answer check
 	// Negative Answer check
 
-	var err error
 	var status AuthenticationResult
 
-	keys, err := r.zone.GetDNSKEYRecords()
+	keys, err := zone.GetDNSKEYRecords()
 	if err != nil {
 		return status, r, err
 	}
 
-	status, err = verifyDNSKEYs(a.ctx, r, keys, dsRecordsFromParent)
+	status, err = v.verifyDNSKEYs(ctx, r, keys, dsRecordsFromParent)
 	if status != Unknown || err != nil {
 		return status, r, err
 	}
 
-	status, err = verifyRRSETs(a.ctx, r, extractRecords[*dns.DNSKEY](keys))
+	status, err = v.verifyRRSETs(ctx, r, extractRecords[*dns.DNSKEY](keys))
 	if status != Unknown || err != nil {
 		return status, r, err
 	}
 
-	status, err = validateDelegatingResponse(a.ctx, r)
+	status, err = v.validateDelegatingResponse(ctx, r)
 	if status != Unknown || err != nil {
 		return status, r, err
 	}
 
-	status, err = validatePositiveResponse(a.ctx, r)
+	status, err = v.validatePositiveResponse(ctx, r)
 	if status != Unknown || err != nil {
 		return status, r, err
 	}
 
-	status, err = validateNegativeResponse(a.ctx, r)
+	status, err = v.validateNegativeResponse(ctx, r)
 	if status != Unknown || err != nil {
 		return status, r, err
 	}
@@ -150,10 +150,10 @@ func validateDelegatingResponse(ctx context.Context, r *result) (status Authenti
 	// If we have NS records, but no DS records, we need to ensure there's denial of existence on those DS records.
 	if nsRecordsFound && len(r.msg.Answer) == 0 {
 
-		nsec := newDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority)
-		nsec3 := newDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority)
+		nsec := doe.NewDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority.extractNSECRecords())
+		nsec3 := doe.NewDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority.extractNSEC3Records())
 
-		if nsec.empty() && nsec3.empty() {
+		if nsec.Empty() && nsec3.Empty() {
 			return Bogus, ErrBogusDoeRecordsNotFound
 		}
 
@@ -178,26 +178,26 @@ func validateDelegatingResponse(ctx context.Context, r *result) (status Authenti
 			Maps field of the NSEC3 RR.
 		*/
 
-		if !nsec.empty() {
+		if !nsec.Empty() {
 			// The Type Bit Map must show there are NS records, but there are no CNAME, DS or SOA records.
-			if nameSeen, typeSeen := nsec.typeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
-				if nameSeen, typeSeen = nsec.typeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
+			if nameSeen, typeSeen := nsec.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
+				if nameSeen, typeSeen = nsec.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
 					r.denialOfExistence = NsecMissingDS
 					return Secure, nil
 				}
 			}
 		}
 
-		if !nsec3.empty() {
+		if !nsec3.Empty() {
 			// The Type Bit Map must show there are NS records, but there are no CNAME, DS or SOA records.
-			if nameSeen, typeSeen := nsec3.typeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
-				if nameSeen, typeSeen = nsec3.typeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
+			if nameSeen, typeSeen := nsec3.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
+				if nameSeen, typeSeen = nsec3.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
 					r.denialOfExistence = Nsec3MissingDS
 					return Secure, nil
 				}
 			}
 
-			if optedOut, _, _, _ := nsec3.performClosestEncloserProof(delegationName); optedOut {
+			if optedOut, _, _, _ := nsec3.PerformClosestEncloserProof(delegationName); optedOut {
 				// We have found an opt-out, thus we will conclude any children are insecure.
 				r.denialOfExistence = Nsec3OptOut
 				return Secure, nil
@@ -216,8 +216,8 @@ func validatePositiveResponse(ctx context.Context, r *result) (status Authentica
 		// We extract any delegation DS records that we might have found.
 		r.dsRecords = r.answer.extractDSRecords()
 
-		nsec := newDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority)
-		nsec3 := newDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority)
+		nsec := doe.NewDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority.extractNSECRecords())
+		nsec3 := doe.NewDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority.extractNSEC3Records())
 
 		wildcardSignaturesSeen := false
 		wildcardSignaturesVerified := false
@@ -237,11 +237,11 @@ func validatePositiveResponse(ctx context.Context, r *result) (status Authentica
 				nsecVerified := false
 				nsec3Verified := false
 
-				if !nsec.empty() {
-					nsecVerified = nsec.performExpandedWildcardProof(r.msg.Question[0].Name)
+				if !nsec.Empty() {
+					nsecVerified = nsec.PerformExpandedWildcardProof(r.msg.Question[0].Name)
 				}
-				if !nsec3.empty() {
-					nsec3Verified = nsec3.performExpandedWildcardProof(sig)
+				if !nsec3.Empty() {
+					nsec3Verified = nsec3.PerformExpandedWildcardProof(sig.name, sig.rrsig.Labels)
 				}
 				if nsecVerified || nsec3Verified {
 					wildcardSignaturesVerified = true
@@ -269,28 +269,28 @@ func validateNegativeResponse(ctx context.Context, r *result) (AuthenticationRes
 		qname := r.msg.Question[0].Name
 		qtype := r.msg.Question[0].Qtype
 
-		nsec := newDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority)
-		nsec3 := newDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority)
+		nsec := doe.NewDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority.extractNSECRecords())
+		nsec3 := doe.NewDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority.extractNSEC3Records())
 
-		if nsec.empty() && nsec3.empty() {
+		if nsec.Empty() && nsec3.Empty() {
 			return Bogus, ErrBogusDoeRecordsNotFound
 		}
 
-		if !nsec.empty() {
-			if nameSeen, typeSeen := nsec.typeBitMapContainsAnyOf(qname, []uint16{dns.TypeCNAME, qtype}); nameSeen && !typeSeen {
+		if !nsec.Empty() {
+			if nameSeen, typeSeen := nsec.TypeBitMapContainsAnyOf(qname, []uint16{dns.TypeCNAME, qtype}); nameSeen && !typeSeen {
 				r.denialOfExistence = NsecNoData
 				return Secure, nil
 			}
 
-			if nsec.performQNameDoesNotExistProof(qname) {
+			if nsec.PerformQNameDoesNotExistProof(qname) {
 				r.denialOfExistence = NsecNxDomain
 				return Secure, nil
 			}
 		}
 
-		if !nsec3.empty() {
+		if !nsec3.Empty() {
 			// Check for a NODATA response on the QName.
-			if nameSeen, typeSeen := nsec3.typeBitMapContainsAnyOf(qname, []uint16{dns.TypeCNAME, qtype}); nameSeen && !typeSeen {
+			if nameSeen, typeSeen := nsec3.TypeBitMapContainsAnyOf(qname, []uint16{dns.TypeCNAME, qtype}); nameSeen && !typeSeen {
 				r.denialOfExistence = Nsec3NoData
 				return Secure, nil
 			}
@@ -305,14 +305,14 @@ func validateNegativeResponse(ctx context.Context, r *result) (AuthenticationRes
 				CNAME MUST NOT be set in the wildcard matching NSEC3 RR.
 			*/
 			// Check for a NODATA response on a wildcard.
-			if closestEncloser, _, ok := nsec3.findClosestEncloser(qname); ok {
-				if nameSeen, typeSeen := nsec3.typeBitMapContainsAnyOf("*."+closestEncloser, []uint16{dns.TypeCNAME, qtype}); nameSeen && !typeSeen {
+			if closestEncloser, _, ok := nsec3.FindClosestEncloser(qname); ok {
+				if nameSeen, typeSeen := nsec3.TypeBitMapContainsAnyOf("*."+closestEncloser, []uint16{dns.TypeCNAME, qtype}); nameSeen && !typeSeen {
 					r.denialOfExistence = Nsec3NoData
 					return Secure, nil
 				}
 			}
 
-			if optedOut, closestEncloserProof, nextCloserNameProof, wildcardProof := nsec3.performClosestEncloserProof(qname); optedOut {
+			if optedOut, closestEncloserProof, nextCloserNameProof, wildcardProof := nsec3.PerformClosestEncloserProof(qname); optedOut {
 				r.denialOfExistence = Nsec3OptOut
 				return Secure, nil
 			} else if closestEncloserProof && nextCloserNameProof && wildcardProof {

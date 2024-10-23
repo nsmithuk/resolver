@@ -96,7 +96,7 @@ func TestResult_BreakInChainValidated(t *testing.T) {
 		a := NewAuth(context.Background(), dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
 
 		// Used to return the zone apex of the Insecure Result.
-		zone := &wrappedZone{name: "EXAMPLE.COM."}
+		zone := &mockZone{name: "EXAMPLE.COM."}
 
 		// Used to lookup the question details of the last Secure result.
 		msg := &dns.Msg{Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeDS}}}
@@ -127,7 +127,7 @@ func TestResult_BreakInChainValidated(t *testing.T) {
 		a = NewAuth(context.Background(), dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
 
 		// Used to return the zone apex of the Insecure Result.
-		zone = &wrappedZone{name: "example.com."}
+		zone = &mockZone{name: "example.com."}
 
 		// Used to lookup the question details of the last Secure result.
 		msg = &dns.Msg{Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeA}}}
@@ -158,7 +158,7 @@ func TestResult_BreakInChainValidated(t *testing.T) {
 		a = NewAuth(context.Background(), dns.Question{Name: "test.example.com.", Qtype: dns.TypeA})
 
 		// Used to return the zone apex of the Insecure Result.
-		zone = &wrappedZone{name: "example.com."}
+		zone = &mockZone{name: "example.com."}
 
 		// Used to lookup the question details of the last Secure result.
 		msg = &dns.Msg{Question: []dns.Question{{Name: "example.net.", Qtype: dns.TypeDS}}}

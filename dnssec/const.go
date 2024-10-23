@@ -31,13 +31,3 @@ const (
 	answerSection    section = true
 	authoritySection section = false
 )
-
-//type output uint8
-//
-//const (
-//	Continue output = iota
-//	IsSecure
-//	IsBogus
-//	IsIndeterminate
-//	IsError
-//)

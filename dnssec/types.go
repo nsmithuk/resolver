@@ -7,32 +7,14 @@ import (
 
 type Zone interface {
 	Name() string
-	//LookupDS(qname string) (*dns.Msg, error)
 	GetDNSKEYRecords() ([]dns.RR, error)
 }
 
-// wrappedZone retains access to the parent lookup methods, but allows the zone name to be overridden.
-type wrappedZone struct {
-	name   string
-	parent Zone
-}
-
-type Lookup func(zone string, msg *dns.Msg) (*dns.Msg, error)
-
-type DsLookup func(zone, signer string) (*dns.Msg, error)
-
 type Authenticator struct {
-	ctx context.Context
-
+	ctx      context.Context
 	question dns.Question
-
-	//close    sync.Once
-	//finished atomic.Bool
-
-	//queue      chan input
-	//processing *sync.WaitGroup
-
-	results []*result
+	verifier *verifier
+	results  []*result
 }
 
 type input struct {

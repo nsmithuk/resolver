@@ -63,3 +63,19 @@ func (ss signatures) extractDSRecords() []*dns.DS {
 	}
 	return parentDSRecords
 }
+
+func (ss signatures) extractNSECRecords() []*dns.NSEC {
+	parentDSRecords := make([]*dns.NSEC, 0)
+	for _, s := range ss.filterOnType(dns.TypeNSEC) {
+		parentDSRecords = append(parentDSRecords, extractRecords[*dns.NSEC](s.rrset)...)
+	}
+	return parentDSRecords
+}
+
+func (ss signatures) extractNSEC3Records() []*dns.NSEC3 {
+	parentDSRecords := make([]*dns.NSEC3, 0)
+	for _, s := range ss.filterOnType(dns.TypeNSEC3) {
+		parentDSRecords = append(parentDSRecords, extractRecords[*dns.NSEC3](s.rrset)...)
+	}
+	return parentDSRecords
+}
