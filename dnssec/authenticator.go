@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-func NewAuth(ctx context.Context, question *dns.Question) *Authenticator {
+func NewAuth(ctx context.Context, question dns.Question) *Authenticator {
 	auth := &Authenticator{
 		ctx:        ctx,
 		question:   question,
@@ -17,56 +17,124 @@ func NewAuth(ctx context.Context, question *dns.Question) *Authenticator {
 		results:    make([]*result, 0, 5),
 	}
 
-	go auth.start()
+	//go auth.start()
 
 	return auth
 }
 
-func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) {
-	if a.finished.Load() {
-		return
-	}
-	if msg == nil {
-		return
-	}
-
-	a.processing.Add(1)
-	a.queue <- input{zone, msg}
+type MissingDSRecord struct {
+	name string
 }
 
-func (a *Authenticator) Close() {
-	a.close.Do(func() {
-		a.finished.Store(true)
-		close(a.queue)
-		a.queue = nil
-	})
+func (e *MissingDSRecord) RName() string {
+	return e.name
 }
 
-func (a *Authenticator) start() {
+func (e *MissingDSRecord) Error() string {
+	return fmt.Sprintf("missing DS record: %s", e.name)
+}
 
-	var err error
+func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 
-	last := &result{
-		dsRecords: RootTrustAnchors,
+	// The zone name must be an ancestor of the QName.
+	if !dns.IsSubDomain(zone.Name(), a.question.Name) {
+		return fmt.Errorf("%w: current zone:[%s] target qname:[%s]", ErrNotSubdomain, zone.Name(), a.question.Name)
 	}
 
-	for in := range a.queue {
+	// The current QName must be an ancestor of the target QName (or likely equal to).
+	if !dns.IsSubDomain(msg.Question[0].Name, a.question.Name) {
+		return fmt.Errorf("%w: current qname:[%s] target qname:[%s]", ErrNotSubdomain, zone.Name(), a.question.Name)
+	}
 
-		if last != nil {
-			last, err = a.validateChainAndProcess(in, last, 0)
-			if err != nil {
-				// Any errors here are for debugging only.
-				go Debug(fmt.Errorf("error processing response: %w", err).Error())
-				if last != nil {
-					last.err = err
-				}
-			}
+	var last *result
+	if len(a.results) == 0 {
+		last = &result{dsRecords: RootTrustAnchors}
+	} else {
+		last = a.results[len(a.results)-1]
+
+		if !dns.IsSubDomain(last.zone.Name(), zone.Name()) {
+			return fmt.Errorf("%w: last zone:[%s] current zone:[%s]", ErrNotSubdomain, last.zone.Name(), zone.Name())
 		}
-
-		a.processing.Done()
 	}
 
+	rrsigs := extractRecords[*dns.RRSIG](slices.Concat(msg.Answer, msg.Ns))
+
+	if len(rrsigs) > 0 && len(last.dsRecords) > 0 {
+		// TODO: Sense check that all values match?
+		signerName := dns.CanonicalName(rrsigs[0].SignerName)
+		lastDSOwner := dns.CanonicalName(last.dsRecords[0].Header().Name)
+
+		if lastDSOwner != signerName {
+			// The signer name must be an ancestor of the QName.
+			if !dns.IsSubDomain(signerName, a.question.Name) {
+				return fmt.Errorf("%w: signerName:[%s] target qname:[%s]", ErrNotSubdomain, signerName, a.question.Name)
+			}
+
+			// We expect the SignerName of the latest RRSIG to be the Owner Name of the last DS record.
+			// If it's not, we're missing a DS record.
+			// We return a MissingDSRecord error, which includes the next expect record name.
+			// The caller should endeavour to find and pass in the missing records. Then re-try this record.
+			return &MissingDSRecord{signerName}
+		}
+	}
+
+	r, err := a.validateChainAndProcess(input{zone, msg}, last, 0)
+	if err != nil {
+		// Any errors here are for debugging only.
+		go Debug(fmt.Errorf("error processing response: %w", err).Error())
+		if r != nil {
+			r.err = err
+		}
+	}
+
+	return nil
 }
+
+//func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) {
+//	if a.finished.Load() {
+//		return
+//	}
+//	if msg == nil {
+//		return
+//	}
+//
+//	a.processing.Add(1)
+//	a.queue <- input{zone, msg}
+//}
+//
+//func (a *Authenticator) Close() {
+//	a.close.Do(func() {
+//		a.finished.Store(true)
+//		close(a.queue)
+//		a.queue = nil
+//	})
+//}
+//
+//func (a *Authenticator) start() {
+//
+//	var err error
+//
+//	last := &result{
+//		dsRecords: RootTrustAnchors,
+//	}
+//
+//	for in := range a.queue {
+//
+//		if last != nil {
+//			last, err = a.validateChainAndProcess(in, last, 0)
+//			if err != nil {
+//				// Any errors here are for debugging only.
+//				go Debug(fmt.Errorf("error processing response: %w", err).Error())
+//				if last != nil {
+//					last.err = err
+//				}
+//			}
+//		}
+//
+//		a.processing.Done()
+//	}
+//
+//}
 
 func (a *Authenticator) validateChainAndProcess(in input, last *result, iteration uint8) (*result, error) {
 	if iteration > 4 {
@@ -107,7 +175,7 @@ func (a *Authenticator) validateChainAndProcess(in input, last *result, iteratio
 				MUST query the name servers for the parent zone, not the child zone."
 		*/
 
-		// Get the missing DS records. Note that `zone` here still represents the parent of the missmatchSignerName, so we're pointing this at the correct nameservers.
+		// Get the missing DS records. Note that `zone` here still represents the parent of the name, so we're pointing this at the correct nameservers.
 		ds, err := in.zone.LookupDS(missmatchSignerName)
 		if err != nil {
 			return nil, fmt.Errorf("%w for %s (%w)", ErrUnableToFetchDSRecord, missmatchSignerName, err)

@@ -26,7 +26,7 @@ type DsLookup func(zone, signer string) (*dns.Msg, error)
 type Authenticator struct {
 	ctx context.Context
 
-	question *dns.Question
+	question dns.Question
 
 	close    sync.Once
 	finished atomic.Bool

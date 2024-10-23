@@ -85,7 +85,7 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 
 	combinations := make(map[combination]bool, len(signatures))
 
-	// So the number of Name/Type combinations should equal the number of signatures we have.
+	// So the number of name/Type combinations should equal the number of signatures we have.
 	for _, rrset := range rrsets {
 		// We don't sign NS records
 		if rrset.Header().Rrtype == dns.TypeRRSIG || (section == authoritySection && rrset.Header().Rrtype == dns.TypeNS) {

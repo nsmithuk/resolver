@@ -35,7 +35,7 @@ func getTestNsec3RRSets() testNsec3RRSets {
 		newRR("111NOTAB271SNH4EA8ESDKBF1C2QINH1.example.com. 3600 IN NSEC3 1 0 2 ABCDEF 211NOTAB271SNH4EA8ESDKBF1C2QINH1 SOA RRSIG"),
 	}
 
-	// The Next Closer Name
+	// The Next Closer name
 	r.nextCloserName = []dns.RR{
 		// test. == L72QU4B0R4USH96QN17VTCD8395QILEQ
 		// So we need two hashes that cover that hash.
@@ -76,7 +76,7 @@ func getTestNsec3RRSets() testNsec3RRSets {
 
 func TestDenialOfExistenceNSEC3_BitMap(t *testing.T) {
 
-	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner Name, Type Bit Maps
+	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner name, Type Bit Maps
 
 	rrset := []dns.RR{
 		// test.example.com
@@ -286,7 +286,7 @@ func TestDenialOfExistenceNSEC3_WildcardProof(t *testing.T) {
 
 func TestDenialOfExistenceNSEC3_Optout(t *testing.T) {
 
-	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner Name, Type Bit Maps
+	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner name, Type Bit Maps
 
 	// We set the OptOut flag to 1 on the below.
 
@@ -325,7 +325,7 @@ func TestDenialOfExistenceNSEC3_InvalidValues(t *testing.T) {
 
 	// NSEC3 records that have an invalid hash value, or an invalid Flags field, must be ignored.
 
-	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner Name, Type Bit Maps
+	// NSEC3: Hash Algorithm, Flags (optout), Iterations, Salt Length, Salt, Next Hashed Owner name, Type Bit Maps
 
 	// The only allowed Hash Algorithm value is 1. Here we change it to 5.
 	closestEncloser := []dns.RR{

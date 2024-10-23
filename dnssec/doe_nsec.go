@@ -20,7 +20,7 @@ func (doe *denialOfExistenceNSEC) verifyQNameCovered(qname string) bool {
 
 	/*
 		https://datatracker.ietf.org/doc/html/rfc3845#section-2.1.1
-		The value of the Next Domain Name field in the last NSEC record in the zone is the name of the
+		The value of the Next Domain name field in the last NSEC record in the zone is the name of the
 		zone apex (the owner name of the zone's SOA RR).
 	*/
 
@@ -41,7 +41,7 @@ func (doe *denialOfExistenceNSEC) verifyWildcardCovered(qname string) bool {
 
 	/*
 		https://datatracker.ietf.org/doc/html/rfc3845#section-2.1.1
-		The value of the Next Domain Name field in the last NSEC record in the zone is the name of the
+		The value of the Next Domain name field in the last NSEC record in the zone is the name of the
 		zone apex (the owner name of the zone's SOA RR).
 	*/
 

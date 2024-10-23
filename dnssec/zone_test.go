@@ -44,7 +44,7 @@ func TestWrappedZone_Name(t *testing.T) {
 
 	// Assert
 	if result != "example.com." {
-		t.Errorf("expected Name to be 'example.com.', got %s", result)
+		t.Errorf("expected name to be 'example.com.', got %s", result)
 	}
 }
 

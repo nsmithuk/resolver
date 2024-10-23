@@ -20,6 +20,7 @@ var (
 	ErrUnexpectedSignatureCount        = errors.New("an unexpected number of rrsig records were found given the rrsets seen")
 	ErrMultipleWildcardSignatures      = errors.New("multiple wildcard signatures seen")
 	ErrDSLookupLoop                    = errors.New("the maximum number of ds record lookups has been reached")
+	ErrNotSubdomain                    = errors.New("the zone passed in is not a subdomain of the last zone seen")
 
 	ErrSignerNameNotParentOfQName = errors.New("the signer name is not a parent of the qname")
 

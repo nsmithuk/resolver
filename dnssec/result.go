@@ -3,9 +3,9 @@ package dnssec
 import "github.com/miekg/dns"
 
 func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, error) {
-	a.finished.Store(true)
-	a.processing.Wait()
-	defer a.Close()
+	//a.finished.Store(true)
+	//a.processing.Wait()
+	//defer a.Close()
 
 	// If we have no answers at all we have nothing to go on, thus we don't know what the status is.
 	if len(a.results) == 0 {
