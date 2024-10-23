@@ -3,7 +3,7 @@ package dnssec
 import "errors"
 
 var (
-	ErrNoDSRecords                     = errors.New("no DS records passed")
+	ErrNoParentDSRecords               = errors.New("no DS records passed")
 	ErrUnableToFetchDSRecord           = errors.New("unable to fetch missing DS record")
 	ErrKeysNotFound                    = errors.New("no dnskey records found for zone")
 	ErrKeySigningKeysNotFound          = errors.New("no dnskey records found that match the parent ds records")

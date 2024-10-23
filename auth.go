@@ -56,6 +56,19 @@ func (a *authenticator) addResponseWhilstFixingMissingRecords(z *zone, msg *dns.
 }
 
 func (a *authenticator) lookupDSRecordAndRetry(z *zone, missingDSZone string, original *dns.Msg, iteration uint8) error {
+	zoneForRetriedMsg := z.clone(missingDSZone)
+
+	// We can prefetch this DNSKEY whilst we're looking up the missing DS record.
+	go zoneForRetriedMsg.dnsKeys(a.ctx)
+
+	/*
+		Note that we retain the parent nameserver pool because:
+		Also note: https://datatracker.ietf.org/doc/html/rfc4035#section-4.2
+		"When attempting to retrieve missing NSEC RRs that reside on the
+		parental side at a zone cut, a security-aware iterative-mode resolver
+		MUST query the name servers for the parent zone, not the child zone."
+	*/
+
 	qmsg := new(dns.Msg)
 	qmsg.SetQuestion(dns.Fqdn(missingDSZone), dns.TypeDS)
 	qmsg.SetEdns0(4096, true)
@@ -74,15 +87,15 @@ func (a *authenticator) lookupDSRecordAndRetry(z *zone, missingDSZone string, or
 		return err
 	}
 
-	if z.name != missingDSZone {
-		// It's likely that we'll need a new zone for the original message.
-		// This is a shallow clone, so the zone name changes, but it retains the same server pool,
-		// which should be correct.
-		z = z.clone(missingDSZone)
-	}
+	//if z.name != missingDSZone {
+	//	// It's likely that we'll need a new zone for the original message.
+	//	// This is a shallow clone, so the zone name changes, but it retains the same server pool,
+	//	// which should be correct.
+	//	z = z.clone(missingDSZone)
+	//}
 
 	// Retry the original message.
-	return a.addResponseWhilstFixingMissingRecords(z, original, iteration+1)
+	return a.addResponseWhilstFixingMissingRecords(zoneForRetriedMsg, original, iteration+1)
 }
 
 func (a *authenticator) result() (dnssec.AuthenticationResult, dnssec.DenialOfExistenceState, error) {
@@ -105,41 +118,42 @@ func (wrapper *authZoneWrapper) Name() string {
 
 // LookupDS Looks up DS records for the given QName, in the zone.
 // Note that it's the call's responsibility to ensure they're call this against the correct (i.e. parent) zone.
-func (wrapper *authZoneWrapper) LookupDS(qname string) (*dns.Msg, error) {
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(qname), dns.TypeDS)
-	msg.SetEdns0(4096, true)
-	msg.RecursionDesired = false
-	response := wrapper.zone.Exchange(wrapper.ctx, msg)
-	if response.Error() {
-		return nil, response.Err
-	}
-	if response.Empty() {
-		return nil, fmt.Errorf("no answers")
-	}
-	return response.Msg, nil
-}
+//func (wrapper *authZoneWrapper) LookupDS(qname string) (*dns.Msg, error) {
+//	msg := new(dns.Msg)
+//	msg.SetQuestion(dns.Fqdn(qname), dns.TypeDS)
+//	msg.SetEdns0(4096, true)
+//	msg.RecursionDesired = false
+//	response := wrapper.zone.Exchange(wrapper.ctx, msg)
+//	if response.Error() {
+//		return nil, response.Err
+//	}
+//	if response.Empty() {
+//		return nil, fmt.Errorf("no answers")
+//	}
+//	return response.Msg, nil
+//}
 
 // LookupDNSKEY Looks up the DNSKEY records for the given QName, in the zone.
-func (wrapper *authZoneWrapper) LookupDNSKEY(qname string) ([]dns.RR, error) {
+func (wrapper *authZoneWrapper) GetDNSKEYRecords() ([]dns.RR, error) {
+	return wrapper.zone.dnsKeys(wrapper.ctx)
 
-	// If the QName matches the zone's apex, we can use our helper function. Hopefully the result is already cached.
-	if dns.CanonicalName(wrapper.zone.name) == dns.CanonicalName(qname) {
-		return wrapper.zone.dnsKeys(wrapper.ctx)
-	}
-
-	// Otherwise we'll do the exchange ourselves.
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(qname), dns.TypeDNSKEY)
-	msg.SetEdns0(4096, true)
-	msg.RecursionDesired = false
-	response := wrapper.zone.Exchange(wrapper.ctx, msg)
-	if response.Error() {
-		return nil, response.Err
-	}
-	if response.Empty() || len(response.Msg.Answer) == 0 {
-		return nil, fmt.Errorf("no answers")
-	}
-
-	return response.Msg.Answer, nil
+	//// If the QName matches the zone's apex, we can use our helper function. Hopefully the result is already cached.
+	//if dns.CanonicalName(wrapper.zone.name) == dns.CanonicalName(qname) {
+	//	return wrapper.zone.dnsKeys(wrapper.ctx)
+	//}
+	//
+	//// Otherwise we'll do the exchange ourselves.
+	//msg := new(dns.Msg)
+	//msg.SetQuestion(dns.Fqdn(qname), dns.TypeDNSKEY)
+	//msg.SetEdns0(4096, true)
+	//msg.RecursionDesired = false
+	//response := wrapper.zone.Exchange(wrapper.ctx, msg)
+	//if response.Error() {
+	//	return nil, response.Err
+	//}
+	//if response.Empty() || len(response.Msg.Answer) == 0 {
+	//	return nil, fmt.Errorf("no answers")
+	//}
+	//
+	//return response.Msg.Answer, nil
 }

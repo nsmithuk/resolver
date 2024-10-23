@@ -3,14 +3,12 @@ package dnssec
 import (
 	"context"
 	"github.com/miekg/dns"
-	"sync"
-	"sync/atomic"
 )
 
 type Zone interface {
 	Name() string
-	LookupDS(qname string) (*dns.Msg, error)
-	LookupDNSKEY(qname string) ([]dns.RR, error)
+	//LookupDS(qname string) (*dns.Msg, error)
+	GetDNSKEYRecords() ([]dns.RR, error)
 }
 
 // wrappedZone retains access to the parent lookup methods, but allows the zone name to be overridden.
@@ -28,11 +26,11 @@ type Authenticator struct {
 
 	question dns.Question
 
-	close    sync.Once
-	finished atomic.Bool
+	//close    sync.Once
+	//finished atomic.Bool
 
-	queue      chan input
-	processing *sync.WaitGroup
+	//queue      chan input
+	//processing *sync.WaitGroup
 
 	results []*result
 }

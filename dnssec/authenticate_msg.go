@@ -14,10 +14,10 @@ func (a *Authenticator) process(in input, dsRecordsFromParent []*dns.DS) (Authen
 		zone: in.zone,
 		msg:  in.msg,
 	}
-	a.results = append(a.results, r)
 
 	if len(dsRecordsFromParent) == 0 {
-		return Insecure, r, ErrNoDSRecords
+		return Insecure, r, nil // TODO: I'm not really sure this is an error. It's often expected once the chain breaks.
+		//return Insecure, r, ErrNoParentDSRecords
 	}
 
 	// Verify DNSKEYS
@@ -29,7 +29,7 @@ func (a *Authenticator) process(in input, dsRecordsFromParent []*dns.DS) (Authen
 	var err error
 	var status AuthenticationResult
 
-	keys, err := r.zone.LookupDNSKEY(r.zone.Name())
+	keys, err := r.zone.GetDNSKEYRecords()
 	if err != nil {
 		return status, r, err
 	}
