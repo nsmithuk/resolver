@@ -44,9 +44,10 @@ func (v verifier) verify(ctx context.Context, zone Zone, msg *dns.Msg, dsRecords
 		return status, r, err
 	}
 
-	status, err = v.validateDelegatingResponse(ctx, r)
-	if status != Unknown || err != nil {
-		return status, r, err
+	// A Delegating Response has no Answers, no SOA, and at least one NS record in the Authority section.
+	if len(r.msg.Answer) == 0 && recordsOfTypeExist(r.msg.Ns, dns.TypeNS) && !recordsOfTypeExist(r.msg.Ns, dns.TypeSOA) {
+		err = v.validateDelegatingResponse(ctx, r)
+		return Secure, r, err
 	}
 
 	status, err = v.validatePositiveResponse(ctx, r)
@@ -131,82 +132,78 @@ func verifyRRSETs(ctx context.Context, r *result, keys []*dns.DNSKEY) (Authentic
 	return Unknown, nil
 }
 
-func validateDelegatingResponse(ctx context.Context, r *result) (status AuthenticationResult, err error) {
+func validateDelegatingResponse(ctx context.Context, r *result) error {
 
-	nsRecordsFound := recordsOfTypeExist(r.msg.Ns, dns.TypeNS)
+	r.dsRecords = r.authority.extractDSRecords()
 
-	if nsRecordsFound && len(r.msg.Answer) == 0 && recordsOfTypeExist(r.msg.Ns, dns.TypeDS) {
-		nsRecods := extractRecordsOfType(r.msg.Ns, dns.TypeNS)
-		if !recordsHaveTheSameOwner(nsRecods) {
-			return Bogus, ErrNSRecordsHaveMissmatchingOwners
-		}
-
-		// We extract any delegation DS records that we might have found.
-		r.dsRecords = r.authority.extractDSRecords()
-
-		return Secure, nil
+	// If DS records were found, then we're done here.
+	if len(r.dsRecords) > 0 {
+		return nil
 	}
 
-	// If we have NS records, but no DS records, we need to ensure there's denial of existence on those DS records.
-	if nsRecordsFound && len(r.msg.Answer) == 0 {
+	//---
 
-		nsec := doe.NewDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority.extractNSECRecords())
-		nsec3 := doe.NewDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority.extractNSEC3Records())
-
-		if nsec.Empty() && nsec3.Empty() {
-			return Bogus, ErrBogusDoeRecordsNotFound
-		}
-
-		nsRecods := extractRecordsOfType(r.msg.Ns, dns.TypeNS)
-		if !recordsHaveTheSameOwner(nsRecods) {
-			return Bogus, ErrNSRecordsHaveMissmatchingOwners
-		}
-
-		delegationName := nsRecods[0].Header().Name
-
-		/*
-			https://datatracker.ietf.org/doc/html/rfc5155#section-8.9
-			If there is an NSEC3 RR present in the response that matches the
-			delegation name, then the validator MUST ensure that the NS bit is
-			set and that the DS bit is not set in the Type Bit Maps field of the
-			NSEC3 RR.  The validator MUST also ensure that the NSEC3 RR is from
-			the correct (i.e., parent) zone.  This is done by ensuring that the
-			SOA bit is not set in the Type Bit Maps field of this NSEC3 RR.
-
-			Note that the presence of an NS bit implies the absence of a DNAME
-			bit, so there is no need to check for the DNAME bit in the Type Bit
-			Maps field of the NSEC3 RR.
-		*/
-
-		if !nsec.Empty() {
-			// The Type Bit Map must show there are NS records, but there are no CNAME, DS or SOA records.
-			if nameSeen, typeSeen := nsec.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
-				if nameSeen, typeSeen = nsec.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
-					r.denialOfExistence = NsecMissingDS
-					return Secure, nil
-				}
-			}
-		}
-
-		if !nsec3.Empty() {
-			// The Type Bit Map must show there are NS records, but there are no CNAME, DS or SOA records.
-			if nameSeen, typeSeen := nsec3.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
-				if nameSeen, typeSeen = nsec3.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
-					r.denialOfExistence = Nsec3MissingDS
-					return Secure, nil
-				}
-			}
-
-			if optedOut, _, _, _ := nsec3.PerformClosestEncloserProof(delegationName); optedOut {
-				// We have found an opt-out, thus we will conclude any children are insecure.
-				r.denialOfExistence = Nsec3OptOut
-				return Secure, nil
-			}
-		}
-
+	nsRecords := extractRecordsOfType(r.msg.Ns, dns.TypeNS)
+	if !recordsHaveTheSameOwner(nsRecords) {
+		// This seems an odd case. But if true, we cannot confidently know which is the delegation name.
+		return fmt.Errorf("%w: this prevents us from checking nsec(3) records", ErrNSRecordsHaveMismatchingOwners)
 	}
 
-	return Unknown, nil
+	delegationName := nsRecords[0].Header().Name
+
+	//---
+
+	nsec := doe.NewDenialOfExistenceNSEC(ctx, r.zone.Name(), r.authority.extractNSECRecords())
+	nsec3 := doe.NewDenialOfExistenceNSEC3(ctx, r.zone.Name(), r.authority.extractNSEC3Records())
+
+	if nsec.Empty() && nsec3.Empty() {
+		// No DOE exists, which likely means the overall chain will be Bogus. But this link is technically Secure.
+		return nil
+	}
+
+	/*
+		https://datatracker.ietf.org/doc/html/rfc5155#section-8.9
+		If there is an NSEC3 RR present in the response that matches the
+		delegation name, then the validator MUST ensure that the NS bit is
+		set and that the DS bit is not set in the Type Bit Maps field of the
+		NSEC3 RR.  The validator MUST also ensure that the NSEC3 RR is from
+		the correct (i.e., parent) zone.  This is done by ensuring that the
+		SOA bit is not set in the Type Bit Maps field of this NSEC3 RR.
+
+		Note that the presence of an NS bit implies the absence of a DNAME
+		bit, so there is no need to check for the DNAME bit in the Type Bit
+		Maps field of the NSEC3 RR.
+	*/
+
+	if !nsec.Empty() {
+		// The Type Bit Map must show there are NS records, but there are no CNAME, DS or SOA records.
+		if nameSeen, typeSeen := nsec.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
+			if nameSeen, typeSeen = nsec.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
+				r.denialOfExistence = NsecMissingDS
+				return nil
+			}
+		}
+	}
+
+	if !nsec3.Empty() {
+		// The Type Bit Map must show there are NS records, but there are no CNAME, DS or SOA records.
+		if nameSeen, typeSeen := nsec3.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeNS}); nameSeen && typeSeen {
+			if nameSeen, typeSeen = nsec3.TypeBitMapContainsAnyOf(delegationName, []uint16{dns.TypeCNAME, dns.TypeDS, dns.TypeSOA}); nameSeen && !typeSeen {
+				r.denialOfExistence = Nsec3MissingDS
+				return nil
+			}
+		}
+
+		if optedOut, _, _, _ := nsec3.PerformClosestEncloserProof(delegationName); optedOut {
+			// We have found an opt-out, thus we will conclude any children are insecure.
+			r.denialOfExistence = Nsec3OptOut
+			return nil
+		}
+	}
+
+	//}
+
+	return nil
 }
 
 func validatePositiveResponse(ctx context.Context, r *result) (status AuthenticationResult, err error) {

@@ -327,8 +327,8 @@ func TestAuthenticate_InvalidSignerName(t *testing.T) {
 		t.Error("expected error but not found")
 	}
 
-	if !errors.Is(err, ErrAuthSignerNameMissmatch) {
-		t.Errorf("expected error to be ErrAuthSignerNameMissmatch. got: %s", err.Error())
+	if !errors.Is(err, ErrAuthSignerNameMismatch) {
+		t.Errorf("expected error to be ErrAuthSignerNameMismatch. got: %s", err.Error())
 	}
 
 	if set[0].wildcard == true {

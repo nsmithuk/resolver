@@ -23,7 +23,7 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 		signatures[i] = &sig
 
 		if dns.CanonicalName(sig.zone) != dns.CanonicalName(rrsig.SignerName) {
-			sig.err = fmt.Errorf("%w: zone:[%s] SignerName:[%s]", ErrAuthSignerNameMissmatch, sig.zone, rrsig.SignerName)
+			sig.err = fmt.Errorf("%w: zone:[%s] SignerName:[%s]", ErrAuthSignerNameMismatch, sig.zone, rrsig.SignerName)
 			continue
 		}
 
