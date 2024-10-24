@@ -25,6 +25,7 @@ var (
 	ErrDSLookupLoop                    = errors.New("the maximum number of ds record lookups has been reached")
 	ErrNotSubdomain                    = errors.New("domain is not a subdomain of another")
 	ErrSameName                        = errors.New("domain names are the same")
+	ErrUnknown                         = errors.New("unknown error: unable to process response")
 
 	ErrSignerNameNotParentOfQName = errors.New("the signer name is not a parent of the qname")
 

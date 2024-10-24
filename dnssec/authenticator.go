@@ -88,20 +88,25 @@ func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 
 	state, r, err := a.verify(a.ctx, zone, msg, last.dsRecords)
 
-	a.results = append(a.results, r)
-
-	if state == Unknown {
-		// If we don't know by now, we fail-safe to Bogus.
-		state = Bogus
-	}
-	r.state = state
-
 	if err != nil {
 		// Any errors here are for debugging only.
 		Debug(fmt.Errorf("error processing response: %w", err).Error())
 		if r != nil {
 			r.err = err
 		}
+	}
+
+	if r != nil {
+		a.results = append(a.results, r)
+
+		if state == Unknown {
+			// If we don't know by now, we fail-safe to Bogus.
+			state = Bogus
+		}
+		r.state = state
+
+	} else {
+		return ErrUnknown
 	}
 
 	return nil
