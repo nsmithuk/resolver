@@ -3,13 +3,10 @@ package dnssec
 import "github.com/miekg/dns"
 
 func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, error) {
-	a.finished.Store(true)
-	a.processing.Wait()
-	defer a.Close()
 
 	// If we have no answers at all we have nothing to go on, thus we don't know what the status is.
 	if len(a.results) == 0 {
-		return Unknown, NotFound, nil
+		return Unknown, NotFound, ErrNoResults
 	}
 
 	//-----------------------------------------------------------
@@ -23,38 +20,38 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 
 	//-----------------------------------------------------------
 	// If the chain moved from Secure to Insecure,
-	// there must be Denial of Existence - otherwise Bogus.
+	// there must be Denial of Existence on the DS records, otherwise Bogus.
 
-	for i, r := range a.results {
-		if r.state == Secure {
+	for i, current := range a.results {
+		if current.state == Secure {
 			continue
 		}
 
 		if i == 0 {
 			// If the first result was not secure, we might as well give up now.
-			return r.state, r.denialOfExistence, r.err
+			return current.state, current.denialOfExistence, current.err
 		}
 
-		lastResult := a.results[i-1]
+		previous := a.results[i-1]
 
-		// TODO: is lastResult.denialOfExistence != NotFound correct?
+		switch previous.denialOfExistence {
+		case Nsec3OptOut, NsecMissingDS, Nsec3MissingDS:
+			return Insecure, previous.denialOfExistence, current.err
 
-		//if lastResult.denialOfExistence == Nsec3OptOut {
-		//	// If the denial of existence was an opt-out, the best we can conclude is Insecure.
-		//	return Insecure, lastResult.denialOfExistence, r.err
-		//}
-		//
-		//// We expect the NSEC proof for a missing DS.
-		//if lastResult.denialOfExistence == NsecMissingDS || lastResult.denialOfExistence == Nsec3MissingDS {
-		//	return Insecure, lastResult.denialOfExistence, r.err
-		//}
+		case NsecNoData, Nsec3NoData:
+			previousQ := previous.msg.Question[0]
 
-		// We'll accept any form of DOE.
-		if lastResult.denialOfExistence != NotFound {
-			return Insecure, lastResult.denialOfExistence, r.err
+			// This is only valid if we'd specifically queried for the DS records we needed.
+			// i.e. The Question we have the DOE for should match the zone apex for the current result's zone.
+			if previousQ.Qtype == dns.TypeDS && dns.CanonicalName(previousQ.Name) == dns.CanonicalName(current.zone.Name()) {
+				return Insecure, previous.denialOfExistence, current.err
+			}
+
+			// NsecNxDomain & Nsec3NxDomain are not accepted as the Record Owner must exist
+			// if we've been delegated to its ancestor.
 		}
 
-		return Bogus, lastResult.denialOfExistence, r.err
+		return Bogus, previous.denialOfExistence, current.err
 	}
 
 	//-----------------------------------------------------------
@@ -63,26 +60,30 @@ func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, 
 	last := a.results[len(a.results)-1]
 
 	if last.state != Secure {
+		// TODO: check if this can ever be called. I suspect not.
 		return last.state, last.denialOfExistence, last.err
 	}
 
-	if last.denialOfExistence == Nsec3OptOut {
+	switch last.denialOfExistence {
+	case Nsec3OptOut:
 		return Insecure, last.denialOfExistence, last.err
-	}
-
-	// If there was DOE found...
-	if last.denialOfExistence != NotFound {
+	case NsecNxDomain, Nsec3NxDomain, NsecNoData, Nsec3NoData:
 		return Secure, last.denialOfExistence, last.err
+	default:
+		return Bogus, last.denialOfExistence, last.err
+	case NotFound, NsecWildcard, Nsec3Wildcard:
+		// We carry on...
 	}
 
 	//-----------------------------------------------------------
 	// We now expect a positive answer
 
-	// We should see no SOA.
+	// We should see no SOA in the authority section.
 	if recordsOfTypeExist(last.msg.Ns, dns.TypeSOA) {
 		return Bogus, last.denialOfExistence, last.err
 	}
 
+	// We expect an answer matching the QNAme, and the QType or CNAME.
 	if len(extractRecordsOfNameAndType(last.msg.Answer, a.question.Name, a.question.Qtype)) > 0 {
 		return Secure, last.denialOfExistence, last.err
 	}

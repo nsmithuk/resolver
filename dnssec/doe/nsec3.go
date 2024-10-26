@@ -1,13 +1,16 @@
-package dnssec
+package doe
 
 import (
 	"github.com/miekg/dns"
 	"slices"
 )
 
-func (doe *denialOfExistenceNSEC3) performClosestEncloserProof(name string) (optedOut, closestEncloserProof, nextCloserNameProof, wildcardProof bool) {
+func (doe *DenialOfExistenceNSEC3) PerformClosestEncloserProof(name string) (optedOut, closestEncloserProof, nextCloserNameProof, wildcardProof bool) {
+	if doe.Empty() {
+		return
+	}
 
-	closestEncloser, nextCloserName, ok := doe.findClosestEncloser(name)
+	closestEncloser, nextCloserName, ok := doe.FindClosestEncloser(name)
 	if !ok {
 		return
 	}
@@ -21,7 +24,7 @@ func (doe *denialOfExistenceNSEC3) performClosestEncloserProof(name string) (opt
 	return
 }
 
-func (doe *denialOfExistenceNSEC3) performExpandedWildcardProof(wildcardAnswerSignature *signature) bool {
+func (doe *DenialOfExistenceNSEC3) PerformExpandedWildcardProof(wildcardAnswerSignatureName string, wildcardAnswerSignatureNameLabels uint8) bool {
 	/*
 		https://datatracker.ietf.org/doc/html/rfc5155#section-7.2.6
 		7.2.6.  Wildcard Answer Responses
@@ -39,30 +42,45 @@ func (doe *denialOfExistenceNSEC3) performExpandedWildcardProof(wildcardAnswerSi
 		necessary to return an NSEC3 RR that matches the closest encloser, as
 		the existence of this closest encloser is proven by the presence of
 		the expanded wildcard in the response.
+
+
+		https://datatracker.ietf.org/doc/html/rfc5155#section-8.8
+		8.8.  Validating Wildcard Answer Responses
+
+		The verified wildcard answer RRSet in the response provides the
+		validator with a (candidate) closest encloser for QNAME.  This
+		closest encloser is the immediate ancestor to the generating
+		wildcard.
+
+		Validators MUST verify that there is an NSEC3 RR that covers the
+		"next closer" name to QNAME present in the response.  This proves
+		that QNAME itself did not exist and that the correct wildcard was
+		used to generate the response.
 	*/
 
-	labelIndexs := dns.Split(wildcardAnswerSignature.name)
-	closestEncloserIndex := len(labelIndexs) - int(wildcardAnswerSignature.rrsig.Labels)
+	labelIndexs := dns.Split(wildcardAnswerSignatureName)
+	closestEncloserIndex := len(labelIndexs) - int(wildcardAnswerSignatureNameLabels)
 
 	// The immediate ancestor of the wildcard
-	closestEncloser := wildcardAnswerSignature.name[labelIndexs[closestEncloserIndex]:]
+	closestEncloser := wildcardAnswerSignatureName[labelIndexs[closestEncloserIndex]:]
 
 	// The "next closer" of the immediate ancestor
-	nextCloserName := wildcardAnswerSignature.name[labelIndexs[closestEncloserIndex-1]:]
+	nextCloserName := wildcardAnswerSignatureName[labelIndexs[closestEncloserIndex-1]:]
 
-	wildcardProof := doe.verifyWildcardCovered(closestEncloser)
+	wildcardProof := doe.verifyWildcardCovered(closestEncloser) || doe.verifyWildcardMatched(closestEncloser)
 	_, nextCloserNameProof := doe.verifyNextCloserNameCovered(nextCloserName)
 
-	// We need no wildcard proof (i.e. there can be a wildcard), and the nextCloserNameProof proving the original QNAME is missing.
+	// We need no DOE wildcard proof (i.e. there can be a wildcard), and the nextCloserName proving the original QNAME is missing.
 	return !wildcardProof && nextCloserNameProof
 }
 
-func (doe *denialOfExistenceNSEC3) verifyWildcardCovered(closestEncloser string) (wildcardProof bool) {
+func (doe *DenialOfExistenceNSEC3) verifyWildcardCovered(closestEncloser string) (wildcardProof bool) {
 
 	// We want Covers, not matched.
 
+	wildcard := "*." + closestEncloser
+
 	for _, nsec3 := range doe.records {
-		wildcard := "*." + closestEncloser
 
 		if nsec3.Match(wildcard) {
 			return false
@@ -77,7 +95,21 @@ func (doe *denialOfExistenceNSEC3) verifyWildcardCovered(closestEncloser string)
 	return
 }
 
-func (doe *denialOfExistenceNSEC3) verifyNextCloserNameCovered(nextCloserName string) (optedOut, nextCloserNameProof bool) {
+func (doe *DenialOfExistenceNSEC3) verifyWildcardMatched(closestEncloser string) (wildcardProof bool) {
+
+	for _, nsec3 := range doe.records {
+		wildcard := "*." + closestEncloser
+
+		if nsec3.Match(wildcard) {
+			return true
+		}
+
+	}
+
+	return
+}
+
+func (doe *DenialOfExistenceNSEC3) verifyNextCloserNameCovered(nextCloserName string) (optedOut, nextCloserNameProof bool) {
 
 	// We want Covers, not matched.
 
@@ -97,7 +129,7 @@ func (doe *denialOfExistenceNSEC3) verifyNextCloserNameCovered(nextCloserName st
 	return
 }
 
-func (doe *denialOfExistenceNSEC3) typeBitMapContainsAnyOf(name string, types []uint16) (nameSeen, typeSeen bool) {
+func (doe *DenialOfExistenceNSEC3) TypeBitMapContainsAnyOf(name string, types []uint16) (nameSeen, typeSeen bool) {
 	for _, nsec3 := range doe.records {
 		if !nsec3.Match(name) {
 			continue
@@ -115,7 +147,7 @@ func (doe *denialOfExistenceNSEC3) typeBitMapContainsAnyOf(name string, types []
 	return nameSeen, false
 }
 
-func (doe *denialOfExistenceNSEC3) findClosestEncloser(qname string) (string, string, bool) {
+func (doe *DenialOfExistenceNSEC3) FindClosestEncloser(qname string) (string, string, bool) {
 
 	// https://datatracker.ietf.org/doc/html/rfc7129#section-5.5
 	//There must be an existing ancestor in the zone: a name

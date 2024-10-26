@@ -1,6 +1,8 @@
 package dnssec
 
-import "github.com/miekg/dns"
+import (
+	"github.com/miekg/dns"
+)
 
 func extractRecords[T dns.RR](rr []dns.RR) []T {
 	r := make([]T, 0, len(rr))
@@ -54,11 +56,15 @@ func recordsHaveTheSameOwner(rr []dns.RR) bool {
 	return true
 }
 
-// wildcardName replaces the first label with *
+// wildcardName replaces the first label with `*`
 func wildcardName(name string) string {
 	labelIndexes := dns.Split(name)
 	if len(labelIndexes) < 2 {
 		return "*."
 	}
 	return "*." + name[labelIndexes[1]:]
+}
+
+func namesEqual(s1, s2 string) bool {
+	return dns.CanonicalName(s1) == dns.CanonicalName(s2)
 }

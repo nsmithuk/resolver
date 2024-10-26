@@ -7,7 +7,6 @@ const (
 	Insecure
 	Secure
 	Bogus
-	Indeterminate
 )
 
 type DenialOfExistenceState uint8
@@ -18,11 +17,13 @@ const (
 	NsecMissingDS
 	NsecNoData
 	NsecNxDomain
+	NsecWildcard
 
 	Nsec3MissingDS
 	Nsec3NoData
 	Nsec3NxDomain
 	Nsec3OptOut
+	Nsec3Wildcard
 )
 
 type section bool
@@ -30,14 +31,4 @@ type section bool
 const (
 	answerSection    section = true
 	authoritySection section = false
-)
-
-type output uint8
-
-const (
-	Continue output = iota
-	IsSecure
-	IsBogus
-	IsIndeterminate
-	IsError
 )

@@ -69,12 +69,12 @@ func (z *zone) Exchange(ctx context.Context, m *dns.Msg) Response {
 }
 
 // TODO: I suspect this can go. It was confusing anyway.
-//func (z *zone) clone(name string) *zone {
-//	return &zone{
-//		name: canonicalName(name),
-//		pool: z.pool,
-//	}
-//}
+func (z *zone) clone(name string) *zone {
+	return &zone{
+		name: canonicalName(name),
+		pool: z.pool,
+	}
+}
 
 func (z *zone) dnsKeys(ctx context.Context) ([]dns.RR, error) {
 	z.dnskeyLock.Lock()

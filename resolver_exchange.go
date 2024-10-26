@@ -47,10 +47,9 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 	channel := make(chan Response)
 
 	// If the DO flag is set, we create a DNSSEC Authenticator.
-	var auth *dnssec.Authenticator
+	var auth *authenticator
 	if !qmsg.CheckingDisabled && isSetDO(qmsg) {
-		auth = dnssec.NewAuth(ctx, &qmsg.Question[0])
-		defer auth.Close()
+		auth = newAuthenticator(ctx, qmsg.Question[0])
 	}
 
 	// Start from the root
@@ -86,7 +85,12 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 			}
 
 			if auth != nil {
-				auth.AddResponse(&authZoneWrapper{ctx: ctx, zone: z}, response.Msg)
+				err := auth.addResponse(z, response.Msg)
+				if err != nil {
+					return Response{
+						Err: fmt.Errorf("error passing response to dnssec authenticator: %w", err),
+					}
+				}
 			}
 
 			//---
@@ -96,7 +100,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 				if auth != nil {
 
 					authTime := time.Now()
-					response.Auth, _, response.Err = auth.Result()
+					response.Auth, _, response.Err = auth.result()
 					go Info(fmt.Sprintf("Wait time for DNSSEC result: %s", time.Since(authTime)))
 
 					response.Msg.AuthenticatedData = response.Auth == dnssec.Secure

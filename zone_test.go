@@ -62,22 +62,22 @@ func TestZone_Exchange_WithPool(t *testing.T) {
 	mockPool.AssertCalled(t, "exchange", ctxMatcher, msg)
 }
 
-//func TestZone_Clone(t *testing.T) {
-//	// Setup
-//	originalZone := &zone{name: "example.com."}
-//	mockPool := new(MockExpiringExchanger)
-//	originalZone.pool = mockPool
-//
-//	// Execute: Clone the zone with a new name
-//	clonedZone := originalZone.clone("newzone.com.")
-//
-//	// Assertions: The new zone should have a new name but share the same pool
-//	assert.Equal(t, "newzone.com.", clonedZone.name)
-//	assert.Equal(t, originalZone.pool, clonedZone.pool)
-//
-//	assert.Empty(t, clonedZone.dnskeys)
-//	assert.Empty(t, clonedZone.dnskeyExpiry)
-//}
+func TestZone_Clone(t *testing.T) {
+	// Setup
+	originalZone := &zone{name: "example.com."}
+	mockPool := new(MockExpiringExchanger)
+	originalZone.pool = mockPool
+
+	// Execute: Clone the zone with a new name
+	clonedZone := originalZone.clone("newzone.com.")
+
+	// Assertions: The new zone should have a new name but share the same pool
+	assert.Equal(t, "newzone.com.", clonedZone.name)
+	assert.Equal(t, originalZone.pool, clonedZone.pool)
+
+	assert.Empty(t, clonedZone.dnskeys)
+	assert.Empty(t, clonedZone.dnskeyExpiry)
+}
 
 func TestZone_DNSKeys_CachedAndValid(t *testing.T) {
 	// Setup

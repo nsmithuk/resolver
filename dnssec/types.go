@@ -3,38 +3,18 @@ package dnssec
 import (
 	"context"
 	"github.com/miekg/dns"
-	"sync"
-	"sync/atomic"
 )
 
 type Zone interface {
 	Name() string
-	LookupDS(qname string) (*dns.Msg, error)
-	LookupDNSKEY(qname string) ([]dns.RR, error)
+	GetDNSKEYRecords() ([]dns.RR, error)
 }
-
-// wrappedZone retains access to the parent lookup methods, but allows the zone name to be overridden.
-type wrappedZone struct {
-	name   string
-	parent Zone
-}
-
-type Lookup func(zone string, msg *dns.Msg) (*dns.Msg, error)
-
-type DsLookup func(zone, signer string) (*dns.Msg, error)
 
 type Authenticator struct {
-	ctx context.Context
-
-	question *dns.Question
-
-	close    sync.Once
-	finished atomic.Bool
-
-	queue      chan input
-	processing *sync.WaitGroup
-
-	results []*result
+	ctx      context.Context
+	question dns.Question
+	results  []*result
+	verify   func(ctx context.Context, zone Zone, msg *dns.Msg, dsRecordsFromParent []*dns.DS) (AuthenticationResult, *result, error)
 }
 
 type input struct {
@@ -78,4 +58,12 @@ type signature struct {
 	err      error
 
 	dsSha256 string // For debugging
+}
+
+type verifier struct {
+	verifyDNSKEYs              func(ctx context.Context, r *result, keys []dns.RR, dsRecordsFromParent []*dns.DS) (AuthenticationResult, error)
+	verifyRRSETs               func(ctx context.Context, r *result, keys []*dns.DNSKEY) (AuthenticationResult, error)
+	validateDelegatingResponse func(ctx context.Context, r *result) (AuthenticationResult, error)
+	validatePositiveResponse   func(ctx context.Context, r *result) (AuthenticationResult, error)
+	validateNegativeResponse   func(ctx context.Context, r *result) (AuthenticationResult, error)
 }
