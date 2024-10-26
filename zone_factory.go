@@ -35,7 +35,7 @@ func createZone(ctx context.Context, name string, nameservers []*dns.NS, extra [
 		pool: pool,
 	}
 
-	go Debug(fmt.Sprintf("new z created [%s]", name))
+	Debug(fmt.Sprintf("new z created [%s]", name))
 
 	return z, nil
 }
@@ -93,7 +93,7 @@ func enrichPool(ctx context.Context, zoneName string, pool *nameserverPool, exch
 		return fmt.Errorf("%w [%s]: enrichment timeout", ErrFailedEnrichingPool, zoneName)
 	}
 
-	go Debug(fmt.Sprintf("zone pool enriched for [%s]", zoneName))
+	Debug(fmt.Sprintf("zone pool enriched for [%s]", zoneName))
 
 	return nil
 }

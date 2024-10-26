@@ -22,25 +22,23 @@ type zone struct {
 	dnskeyLock   sync.Mutex
 }
 
-func (z *zone) Exchange(ctx context.Context, m *dns.Msg) Response {
+func (z *zone) Exchange(ctx context.Context, m *dns.Msg) *Response {
 
 	z.calls.Add(1)
 
 	if Cache != nil {
 		if msg, err := Cache.Get(z.name, m.Question[0]); err != nil {
-			go Warn(fmt.Errorf("error trying to perform a cache lookup for zone [%s]: %w", z.name, err).Error())
+			Warn(fmt.Errorf("error trying to perform a cache lookup for zone [%s]: %w", z.name, err).Error())
 		} else if msg != nil {
-			go func() {
-				iteration, _ := ctx.Value(ctxIteration).(uint32)
-				Query(fmt.Sprintf(
-					"%d: response for [%s] %s in zone [%s] found in cache",
-					iteration,
-					m.Question[0].Name,
-					TypeToString(m.Question[0].Qtype),
-					z.name,
-				))
-			}()
-			return Response{Msg: msg.Copy()}
+			iteration, _ := ctx.Value(ctxIteration).(uint32)
+			Query(fmt.Sprintf(
+				"%d: response for [%s] %s in zone [%s] found in cache",
+				iteration,
+				m.Question[0].Name,
+				TypeToString(m.Question[0].Qtype),
+				z.name,
+			))
+			return &Response{Msg: msg.Copy()}
 		}
 	}
 

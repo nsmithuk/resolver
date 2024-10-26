@@ -10,27 +10,28 @@ import (
 type Response struct {
 	Msg      *dns.Msg
 	Err      error
-	Auth     dnssec.AuthenticationResult
 	Duration time.Duration
+	Deo      dnssec.DenialOfExistenceState
+	Auth     dnssec.AuthenticationResult
 }
 
 func (r *Response) Error() bool {
-	return r.Err != nil
+	return r != nil && r.Err != nil
 }
 
 func (r *Response) Empty() bool {
-	return r.Msg == nil
+	return r == nil || r.Msg == nil
 }
 
-func (r *Response) Truncated() bool {
+func (r *Response) truncated() bool {
 	if r.Empty() {
 		return false
 	}
 	return r.Msg.Truncated
 }
 
-func ResponseError(err error) Response {
-	return Response{
+func ResponseError(err error) *Response {
+	return &Response{
 		Err: err,
 	}
 }
@@ -38,7 +39,7 @@ func ResponseError(err error) Response {
 //---
 
 type exchanger interface {
-	exchange(context.Context, *dns.Msg) Response
+	exchange(context.Context, *dns.Msg) *Response
 }
 
 type expiringExchanger interface {

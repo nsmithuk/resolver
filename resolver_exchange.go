@@ -12,7 +12,7 @@ import (
 // We have a public Exchange(), so people can call it.
 // And a private exchange(), to meet the exchanger interface.
 
-func (resolver *Resolver) Exchange(ctx context.Context, qmsg *dns.Msg) Response {
+func (resolver *Resolver) Exchange(ctx context.Context, qmsg *dns.Msg) *Response {
 	if !qmsg.RecursionDesired {
 		return ResponseError(ErrNotRecursionDesired)
 	}
@@ -21,7 +21,7 @@ func (resolver *Resolver) Exchange(ctx context.Context, qmsg *dns.Msg) Response 
 	return resolver.exchange(ctx, qmsg.Copy())
 }
 
-func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response {
+func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response {
 	start := time.Now()
 
 	// We never expect/want our own queries to be recursive.
@@ -44,7 +44,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 	//---
 
 	// channel onto which response are placed as they come in.
-	channel := make(chan Response)
+	channel := make(chan *Response)
 
 	// If the DO flag is set, we create a DNSSEC Authenticator.
 	var auth *authenticator
@@ -79,7 +79,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 			}
 
 			if response.Empty() {
-				return Response{
+				return &Response{
 					Err: fmt.Errorf("nil was returned from the exchange, without an error. mysterious"),
 				}
 			}
@@ -87,7 +87,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 			if auth != nil {
 				err := auth.addResponse(z, response.Msg)
 				if err != nil {
-					return Response{
+					return &Response{
 						Err: fmt.Errorf("error passing response to dnssec authenticator: %w", err),
 					}
 				}
@@ -100,8 +100,8 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 				if auth != nil {
 
 					authTime := time.Now()
-					response.Auth, _, response.Err = auth.result()
-					go Info(fmt.Sprintf("Wait time for DNSSEC result: %s", time.Since(authTime)))
+					response.Auth, response.Deo, response.Err = auth.result()
+					Info(fmt.Sprintf("Wait time for DNSSEC result: %s", time.Since(authTime)))
 
 					response.Msg.AuthenticatedData = response.Auth == dnssec.Secure
 
@@ -141,7 +141,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 			nameservers := extractRecords[*dns.NS](response.Msg.Ns)
 
 			if len(nameservers) == 0 {
-				return Response{
+				return &Response{
 					Err: fmt.Errorf("no delegation nameservers found. we don't know where to go next"),
 				}
 			}
@@ -150,7 +150,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 
 			// We expect the zone name to be a subdomain of the current zone (and also not the same as the current zone).
 			if zoneName == z.name || !dns.IsSubDomain(z.name, zoneName) {
-				return Response{
+				return &Response{
 					Err: fmt.Errorf("unexpected next zone name [%s] after [%s]", zoneName, z.name),
 				}
 			}
@@ -161,7 +161,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 				var err error
 				z, err = createZone(ctx, zoneName, nameservers, response.Msg.Extra, resolver)
 				if err != nil {
-					return Response{
+					return &Response{
 						Err: err,
 					}
 				}
@@ -169,20 +169,20 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) Response 
 			}
 
 			if z == nil {
-				return Response{
+				return &Response{
 					Err: fmt.Errorf("cannot find next zone in the chain"),
 				}
 			}
 
 		case <-ctx.Done():
-			return Response{
+			return &Response{
 				Err: fmt.Errorf("cancelled"),
 			}
 		}
 
 	} // for
 
-	return Response{
+	return &Response{
 		Err: fmt.Errorf("too many iterations"),
 	}
 }

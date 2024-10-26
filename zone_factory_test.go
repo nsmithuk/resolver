@@ -73,7 +73,7 @@ func TestCreateZone_SuccessWithEnrichment(t *testing.T) {
 	ctx := context.TODO()
 
 	// Mock the exchanger behavior if needed (e.g., to enrich the pool)
-	mockExchanger.On("exchange", mock.Anything, mock.Anything).Return(Response{
+	mockExchanger.On("exchange", mock.Anything, mock.Anything).Return(&Response{
 		Msg: &dns.Msg{
 			Answer: []dns.RR{
 				&dns.A{Hdr: dns.RR_Header{Name: "ns1.example.com.", Rrtype: dns.TypeA, Ttl: 300}, A: net.ParseIP("192.0.2.53")},
@@ -112,7 +112,7 @@ func TestCreateZone_PoolCreationFailsWithEnrichment(t *testing.T) {
 	ctx := context.TODO()
 
 	// Mock the exchanger behavior if needed (e.g., to enrich the pool)
-	mockExchanger.On("exchange", mock.Anything, mock.Anything).Return(Response{
+	mockExchanger.On("exchange", mock.Anything, mock.Anything).Return(&Response{
 		Msg: &dns.Msg{
 			Answer: []dns.RR{},
 		},
@@ -144,7 +144,7 @@ func TestCreateZone_SuccessWithOptionalEnrichment(t *testing.T) {
 	ctx := context.TODO()
 
 	// Mock the exchanger behavior if needed (e.g., to enrich the pool)
-	mockExchanger.On("exchange", mock.Anything, mock.Anything).Return(Response{
+	mockExchanger.On("exchange", mock.Anything, mock.Anything).Return(&Response{
 		Msg: &dns.Msg{
 			Answer: []dns.RR{
 				&dns.A{Hdr: dns.RR_Header{Name: "ns2.example.com.", Rrtype: dns.TypeA, Ttl: 300}, A: net.ParseIP("192.0.2.54")},

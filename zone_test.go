@@ -39,7 +39,7 @@ func TestZone_Exchange_WithPool(t *testing.T) {
 	msg.SetQuestion(dns.Fqdn("example.com."), dns.TypeA)
 	ctx := context.TODO()
 
-	expectedResponse := Response{Msg: msg, Duration: 10 * time.Millisecond}
+	expectedResponse := &Response{Msg: msg, Duration: 10 * time.Millisecond}
 
 	ctxMatcher := mock.MatchedBy(func(c context.Context) bool {
 		return true // Always returns true because we are just checking that it implements context.Context
@@ -104,7 +104,7 @@ func TestZone_DNSKeys_Expired(t *testing.T) {
 	// Prepare an expired DNS key
 	z.dnskeyExpiry = time.Now().Add(-time.Hour) // Keys are expired
 
-	expectedResponse := Response{
+	expectedResponse := &Response{
 		Msg: &dns.Msg{
 			Answer: []dns.RR{&dns.DNSKEY{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: 300}}},
 		},

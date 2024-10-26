@@ -30,14 +30,14 @@ type nameserver struct {
 
 // The factory pattern here is to facilitate `exchangeWithClientFactory` being tested with a mock client.
 
-func (nameserver *nameserver) exchange(ctx context.Context, m *dns.Msg) Response {
+func (nameserver *nameserver) exchange(ctx context.Context, m *dns.Msg) *Response {
 	factory := func(protocol string) dnsClient {
 		return &dns.Client{Net: protocol, Timeout: 600 * time.Millisecond}
 	}
 	return nameserver.exchangeWithClientFactory(ctx, m, factory)
 }
 
-func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *dns.Msg, factory dnsClientFactory) Response {
+func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *dns.Msg, factory dnsClientFactory) *Response {
 	zoneName := "unknown"
 	if z, ok := ctx.Value(ctxZoneName).(string); ok {
 		zoneName = z
@@ -56,22 +56,25 @@ func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *
 
 		r.Msg, r.Duration, r.Err = client.ExchangeContext(ctx, m, addr)
 
+		//---
+
+		iteration, _ := ctx.Value(ctxIteration).(uint32)
+		Query(fmt.Sprintf(
+			"%d: %s taken querying [%s] %s in zone [%s] on %s://%s (%s)",
+			iteration,
+			r.Duration,
+			m.Question[0].Name,
+			TypeToString(m.Question[0].Qtype),
+			zoneName,
+			protocol,
+			nameserver.hostname,
+			addr,
+		))
+
+		//---
+
 		// Logging and metric; in their own go routine.
-		go func(r Response, protocol string) {
-			iteration, _ := ctx.Value(ctxIteration).(uint32)
-
-			Query(fmt.Sprintf(
-				"%d: %s taken querying [%s] %s in zone [%s] on %s://%s (%s)",
-				iteration,
-				r.Duration,
-				m.Question[0].Name,
-				TypeToString(m.Question[0].Qtype),
-				zoneName,
-				protocol,
-				nameserver.hostname,
-				addr,
-			))
-
+		go func(r *Response, protocol string) {
 			nameserver.metricsLock.Lock()
 			nameserver.numberOfRequests++
 			nameserver.totalResponseTime = nameserver.totalResponseTime + r.Duration
@@ -81,7 +84,7 @@ func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *
 			}
 			nameserver.protocolRatio = float32(nameserver.numberOfTcpRequests) / float32(nameserver.numberOfRequests)
 			nameserver.metricsLock.Unlock()
-		}(r, protocol)
+		}(&r, protocol)
 
 		// If we got an error back, we'll continue to maybe try again.
 		if r.Error() {
@@ -90,10 +93,10 @@ func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *
 
 		// Then we can return straight away.
 		if !r.Msg.Truncated {
-			return r
+			return &r
 		}
 	}
 
-	// r here may have an error. It might be Truncated. But it's the best we've got.
-	return r
+	// r here may have an error. It might be truncated. But it's the best we've got.
+	return &r
 }

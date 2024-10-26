@@ -246,16 +246,15 @@ func (pool *nameserverPool) enrich(records []dns.RR) {
 	pool.hostsWithoutAddresses = slices.Clip(hostnamesStillWithoutAddresses)
 }
 
-func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) Response {
-	response := Response{}
-
+func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) *Response {
 	switch pool.status() {
 	case PoolPrimed:
 	case PrimedButNeedsEnhancing:
 	default:
-		response.Err = fmt.Errorf("server pool not setup")
-		return response
+		return ResponseError(fmt.Errorf("server pool not setup"))
 	}
+
+	var response *Response
 
 	if pool.hasIPv6() && IPv6Available() {
 		server := pool.getIPv6()
@@ -265,13 +264,13 @@ func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) Response {
 		response = server.exchange(ctx, m)
 	}
 
-	if response.Empty() || response.Error() || response.Truncated() {
+	if response.Empty() || response.Error() || response.truncated() {
 		// If there was an issue, we give it one more try.
 		// If we have more than one nameserver, this will try a different one.
 		if pool.hasIPv4() {
 			server := pool.getIPv4()
 			response = server.exchange(ctx, m)
-		} else {
+		} else if pool.hasIPv6() {
 			server := pool.getIPv6()
 			response = server.exchange(ctx, m)
 		}

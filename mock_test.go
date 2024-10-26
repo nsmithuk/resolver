@@ -18,7 +18,7 @@ func (m *MockExpiringExchanger) expired() bool {
 }
 
 // Mock the exchange function to simulate DNS message exchange
-func (m *MockExpiringExchanger) exchange(ctx context.Context, msg *dns.Msg) Response {
+func (m *MockExpiringExchanger) exchange(ctx context.Context, msg *dns.Msg) *Response {
 	args := m.Called(ctx, msg)
-	return args.Get(0).(Response)
+	return args.Get(0).(*Response)
 }
