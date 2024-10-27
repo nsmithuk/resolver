@@ -35,7 +35,7 @@ func createZone(ctx context.Context, name string, nameservers []*dns.NS, extra [
 		pool: pool,
 	}
 
-	Debug(fmt.Sprintf("new z created [%s]", name))
+	Debug(fmt.Sprintf("new zone created [%s]", name))
 
 	return z, nil
 }
@@ -52,10 +52,10 @@ func enrichPool(ctx context.Context, zoneName string, pool *nameserverPool, exch
 	}
 
 	types := make([]uint16, 0, 2)
+	types = append(types, dns.TypeA)
 	if IPv6Available() {
 		types = append(types, dns.TypeAAAA)
 	}
-	types = append(types, dns.TypeA)
 
 	//---
 
@@ -66,10 +66,9 @@ func enrichPool(ctx context.Context, zoneName string, pool *nameserverPool, exch
 			for _, domain := range hosts {
 				qmsg := new(dns.Msg)
 				qmsg.SetQuestion(dns.Fqdn(domain), t)
-				qmsg.RecursionDesired = false
 
 				response := exchanger.exchange(ctx, qmsg)
-				if !response.Error() && !response.Empty() {
+				if !response.Error() && !response.Empty() && len(response.Msg.Answer) > 0 {
 					// enrich if the response is good.
 					pool.enrich(response.Msg.Answer)
 					if !doneCalled {

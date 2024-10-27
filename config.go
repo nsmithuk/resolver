@@ -10,6 +10,8 @@ const (
 	DefaultLazyEnrichment = false
 
 	DefaultSuppressBogusResponseSections = true
+
+	DefaultRemoveAuthoritySectionForPositiveAnswers = true
 )
 
 var (
@@ -36,6 +38,10 @@ var (
 	// be suppressed if a response is Bogus. The default and recommended value is true which
 	// aligns the resolver with https://datatracker.ietf.org/doc/html/rfc4035#section-5.5
 	SuppressBogusResponseSections = DefaultSuppressBogusResponseSections
+
+	// RemoveAuthoritySectionForPositiveAnswers indicates if the Authority section should be returned when it's deemed
+	// that it's record have no material impact on the result. e.g. it only contains nameserver records.
+	RemoveAuthoritySectionForPositiveAnswers = DefaultRemoveAuthoritySectionForPositiveAnswers
 )
 
 //---

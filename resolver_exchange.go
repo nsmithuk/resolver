@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// CountZones metrics gathering.
+func (resolver *Resolver) CountZones() int {
+	return resolver.zones.count()
+}
+
 // We have a public Exchange(), so people can call it.
 // And a private exchange(), to meet the exchanger interface.
 
@@ -48,7 +53,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 
 	// If the DO flag is set, we create a DNSSEC Authenticator.
 	var auth *authenticator
-	if !qmsg.CheckingDisabled && isSetDO(qmsg) {
+	if isSetDO(qmsg) {
 		auth = newAuthenticator(ctx, qmsg.Question[0])
 	}
 
@@ -95,15 +100,13 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 
 			//---
 
-			// If an answer claims to be authoritative, of if we're given a SOA in the Authority, then we can return it.
+			// If an answer claims to be authoritative, or if we're given a SOA in the Authority, then we can return it.
 			if response.Msg.Authoritative || recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
 				if auth != nil {
 
 					authTime := time.Now()
 					response.Auth, response.Deo, response.Err = auth.result()
 					Info(fmt.Sprintf("Wait time for DNSSEC result: %s", time.Since(authTime)))
-
-					response.Msg.AuthenticatedData = response.Auth == dnssec.Secure
 
 					/*
 						TODO
@@ -117,20 +120,57 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 						      current time.
 					*/
 
-					// If a response is Bogus, we return a Server Failure with all the response removed.
-					if response.Auth == dnssec.Bogus {
-						response.Msg.Rcode = dns.RcodeServerFailure
-						if SuppressBogusResponseSections {
-							response.Msg.Answer = []dns.RR{}
-							response.Msg.Ns = []dns.RR{}
-							response.Msg.Extra = []dns.RR{}
+					if !qmsg.CheckingDisabled {
+						response.Msg.AuthenticatedData = response.Auth == dnssec.Secure
+
+						// If a response is Bogus, we return a Server Failure with all the response removed.
+						if response.Auth == dnssec.Bogus {
+							response.Msg.Rcode = dns.RcodeServerFailure
+							if SuppressBogusResponseSections {
+								response.Msg.Answer = []dns.RR{}
+								response.Msg.Ns = []dns.RR{}
+								response.Msg.Extra = []dns.RR{}
+							}
 						}
 					}
+
 				}
 
 				// We'll consider both of these 'normal' responses.
 				if !(response.Msg.Rcode == dns.RcodeSuccess || response.Msg.Rcode == dns.RcodeNameError) {
 					response.Err = fmt.Errorf("unsuccessful response code %s (%d)", RcodeToString(response.Msg.Rcode), response.Msg.Rcode)
+				}
+
+				//---
+
+				// Follow any CNAME, if needed.
+				if qmsg.Question[0].Qtype != dns.TypeCNAME && recordsOfTypeExist(response.Msg.Answer, dns.TypeCNAME) {
+					// The results from this are added to `response.Msg`.
+					err := cname(ctx, qmsg, response, resolver)
+					if err != nil {
+						return &Response{
+							Err: err,
+						}
+					}
+				}
+
+				//---
+
+				if RemoveAuthoritySectionForPositiveAnswers && len(response.Msg.Answer) > 0 && !recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
+					response.Msg.Ns = []dns.RR{}
+				}
+
+				dedup := make(map[string]dns.RR)
+				if len(response.Msg.Answer) > 0 {
+					response.Msg.Answer = dns.Dedup(response.Msg.Answer, dedup)
+				}
+				if len(response.Msg.Ns) > 0 {
+					clear(dedup)
+					response.Msg.Ns = dns.Dedup(response.Msg.Ns, dedup)
+				}
+				if len(response.Msg.Extra) > 0 {
+					clear(dedup)
+					response.Msg.Extra = dns.Dedup(response.Msg.Extra, dedup)
 				}
 
 				response.Duration = time.Since(start)

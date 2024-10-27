@@ -36,3 +36,10 @@ func (zones *zones) add(z *zone) {
 	zones.zones[name] = z
 	zones.lock.Unlock()
 }
+
+func (zones *zones) count() int {
+	zones.lock.RLock()
+	c := len(zones.zones)
+	zones.lock.RUnlock()
+	return c
+}

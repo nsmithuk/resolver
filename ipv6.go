@@ -29,6 +29,8 @@ func IPv6Available() bool {
 func UpdateIPv6Availability() {
 	defer ipv6Answered.Store(true)
 
+	// TODO: This needs to be better. I need to make sure I can actually talk to the server.
+
 	// Tries:
 	// 	k.root-servers.net
 	// 	e.root-servers.net.

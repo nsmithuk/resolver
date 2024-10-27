@@ -257,22 +257,26 @@ func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) *Response 
 	var response *Response
 
 	if pool.hasIPv6() && IPv6Available() {
-		server := pool.getIPv6()
-		response = server.exchange(ctx, m)
+		if server := pool.getIPv6(); server != nil {
+			response = server.exchange(ctx, m)
+		}
 	} else {
-		server := pool.getIPv4()
-		response = server.exchange(ctx, m)
+		if server := pool.getIPv4(); server != nil {
+			response = server.exchange(ctx, m)
+		}
 	}
 
 	if response.Empty() || response.Error() || response.truncated() {
 		// If there was an issue, we give it one more try.
 		// If we have more than one nameserver, this will try a different one.
 		if pool.hasIPv4() {
-			server := pool.getIPv4()
-			response = server.exchange(ctx, m)
+			if server := pool.getIPv4(); server != nil {
+				response = server.exchange(ctx, m)
+			}
 		} else if pool.hasIPv6() {
-			server := pool.getIPv6()
-			response = server.exchange(ctx, m)
+			if server := pool.getIPv6(); server != nil {
+				response = server.exchange(ctx, m)
+			}
 		}
 	}
 
