@@ -10,7 +10,7 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 	zone = dns.CanonicalName(zone)
 
 	rrsigs := extractRecords[*dns.RRSIG](rrsets)
-	signatures := make([]*signature, len(rrsigs))
+	signatures := make(signatures, len(rrsigs))
 
 	for i, rrsig := range rrsigs {
 		sig := signature{
@@ -69,6 +69,10 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 
 			}
 		}
+
+		if !sig.verified && sig.err == nil {
+			sig.err = ErrNoKeyFoundForSignature
+		}
 	}
 
 	//-------------------------
@@ -87,10 +91,20 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 
 	// So the number of name/Type combinations should equal the number of signatures we have.
 	for _, rrset := range rrsets {
-		// We don't sign NS records in the authority section, and we don't sign rrsig records.
-		if rrset.Header().Rrtype == dns.TypeRRSIG || (section == authoritySection && rrset.Header().Rrtype == dns.TypeNS) {
+		// We don't sign rrsig records.
+		if rrset.Header().Rrtype == dns.TypeRRSIG {
 			continue
 		}
+
+		// We _typically_ don't sign NS records in the authority section, but ir can happen:
+		// `dig @l.gtld-servers.net. naughty-nameserver.com. DS +dnssec`
+		if section == authoritySection && rrset.Header().Rrtype == dns.TypeNS {
+			// We check and see if we have any signatures for the NS record. If we do, we count the combination.
+			if len(signatures.filterOnType(dns.TypeNS)) == 0 {
+				continue
+			}
+		}
+
 		combinations[combination{
 			name:   rrset.Header().Name,
 			rrtype: rrset.Header().Rrtype,
@@ -98,8 +112,8 @@ func authenticate(zone string, rrsets []dns.RR, dnskeys []*dns.DNSKEY, section s
 	}
 
 	var err error
-	if len(combinations) != len(signatures) {
-		err = fmt.Errorf("%w: we found %d signatures but %d valid name/type combinations", ErrUnexpectedSignatureCount, len(signatures), len(combinations))
+	if len(combinations) != signatures.countNameTypeCombinations() {
+		err = fmt.Errorf("%w: we found %d signatures but %d rrsets", ErrUnexpectedSignatureCount, signatures.countNameTypeCombinations(), len(combinations))
 	}
 
 	return signatures, err

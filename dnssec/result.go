@@ -4,6 +4,19 @@ import "github.com/miekg/dns"
 
 func (a *Authenticator) Result() (AuthenticationResult, DenialOfExistenceState, error) {
 
+	// Ensure we've processed all items in the input butter.
+	for ; a.inputBufferIdx < len(a.inputBuffer); a.inputBufferIdx++ {
+		if a.inputBuffer[a.inputBufferIdx] == nil {
+			continue
+		}
+		in := a.inputBuffer[a.inputBufferIdx]
+		if err := a.processResponse(in.zone, in.msg); err != nil {
+			return Unknown, NotFound, err
+		}
+	}
+
+	//---
+
 	// If we have no answers at all we have nothing to go on, thus we don't know what the status is.
 	if len(a.results) == 0 {
 		return Unknown, NotFound, ErrNoResults

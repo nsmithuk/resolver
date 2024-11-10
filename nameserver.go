@@ -20,6 +20,8 @@ type nameserver struct {
 	hostname string
 	addr     string
 
+	dnsClientFactory dnsClientFactory
+
 	metricsLock         sync.Mutex
 	numberOfRequests    uint32
 	totalResponseTime   time.Duration
@@ -28,16 +30,20 @@ type nameserver struct {
 	protocolRatio       float32
 }
 
-// The factory pattern here is to facilitate `exchangeWithClientFactory` being tested with a mock client.
-
-func (nameserver *nameserver) exchange(ctx context.Context, m *dns.Msg) *Response {
-	factory := func(protocol string) dnsClient {
-		return &dns.Client{Net: protocol, Timeout: 600 * time.Millisecond}
+func (*nameserver) defaultDnsClientFactory(protocol string) dnsClient {
+	timeout := DefaultTimeoutUDP
+	if protocol == "tcp" {
+		timeout = DefaultTimeoutTCP
 	}
-	return nameserver.exchangeWithClientFactory(ctx, m, factory)
+	return &dns.Client{Net: protocol, Timeout: timeout}
 }
 
-func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *dns.Msg, factory dnsClientFactory) *Response {
+func (nameserver *nameserver) exchange(ctx context.Context, m *dns.Msg) *Response {
+	factory := nameserver.defaultDnsClientFactory
+	if nameserver.dnsClientFactory != nil {
+		factory = nameserver.dnsClientFactory
+	}
+
 	zoneName := "unknown"
 	if z, ok := ctx.Value(ctxZoneName).(string); ok {
 		zoneName = z
@@ -58,9 +64,15 @@ func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *
 
 		//---
 
-		iteration, _ := ctx.Value(ctxIteration).(uint32)
+		shortId := "unknown"
+		iteration := uint32(0)
+		if trace, _ := ctx.Value(CtxTrace).(*Trace); trace != nil {
+			shortId = trace.SortID()
+			iteration = trace.Iteration()
+		}
 		Query(fmt.Sprintf(
-			"%d: %s taken querying [%s] %s in zone [%s] on %s://%s (%s)",
+			"%s-%d: %s taken querying [%s] %s in zone [%s] on %s://%s (%s)",
+			shortId,
 			iteration,
 			r.Duration,
 			m.Question[0].Name,
@@ -71,20 +83,7 @@ func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *
 			addr,
 		))
 
-		//---
-
-		// Logging and metric; in their own go routine.
-		go func(r *Response, protocol string) {
-			nameserver.metricsLock.Lock()
-			nameserver.numberOfRequests++
-			nameserver.totalResponseTime = nameserver.totalResponseTime + r.Duration
-			nameserver.averageResponseTime = nameserver.totalResponseTime / time.Duration(nameserver.numberOfRequests)
-			if protocol == "tcp" {
-				nameserver.numberOfTcpRequests++
-			}
-			nameserver.protocolRatio = float32(nameserver.numberOfTcpRequests) / float32(nameserver.numberOfRequests)
-			nameserver.metricsLock.Unlock()
-		}(&r, protocol)
+		go nameserver.updateMetrics(protocol, r.Duration)
 
 		// If we got an error back, we'll continue to maybe try again.
 		if r.Error() {
@@ -99,4 +98,21 @@ func (nameserver *nameserver) exchangeWithClientFactory(ctx context.Context, m *
 
 	// r here may have an error. It might be truncated. But it's the best we've got.
 	return &r
+}
+
+func (nameserver *nameserver) updateMetrics(protocol string, duration time.Duration) {
+	nameserver.metricsLock.Lock()
+
+	nameserver.numberOfRequests++
+
+	nameserver.totalResponseTime = nameserver.totalResponseTime + duration
+	nameserver.averageResponseTime = nameserver.totalResponseTime / time.Duration(nameserver.numberOfRequests)
+
+	if protocol == "tcp" {
+		nameserver.numberOfTcpRequests++
+	}
+
+	nameserver.protocolRatio = float32(nameserver.numberOfTcpRequests) / float32(nameserver.numberOfRequests)
+
+	nameserver.metricsLock.Unlock()
 }

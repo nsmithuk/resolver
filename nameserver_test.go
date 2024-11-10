@@ -21,14 +21,13 @@ func (m *MockDNSClient) ExchangeContext(ctx context.Context, msg *dns.Msg, addr 
 	return args.Get(0).(*dns.Msg), args.Get(1).(time.Duration), args.Error(2)
 }
 
-func TestExchangeWithClientFactory_ValidDNSMessage(t *testing.T) {
+func TestExchange_ValidDNSMessage(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "192.0.2.53"}
-
 	mockClient := new(MockDNSClient)
 	factory := func(protocol string) dnsClient {
 		return mockClient
 	}
+	ns := &nameserver{addr: "192.0.2.53", dnsClientFactory: factory}
 
 	// Prepare the DNS message with a valid question
 	msg := new(dns.Msg)
@@ -41,7 +40,7 @@ func TestExchangeWithClientFactory_ValidDNSMessage(t *testing.T) {
 	mockClient.On("ExchangeContext", ctx, msg, "192.0.2.53:53").Return(expectedResponse, expectedDuration, nil)
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, msg, factory)
+	response := ns.exchange(ctx, msg)
 
 	// Assertions
 	assert.NoError(t, response.Err)
@@ -49,32 +48,31 @@ func TestExchangeWithClientFactory_ValidDNSMessage(t *testing.T) {
 	assert.Equal(t, expectedDuration, response.Duration)
 }
 
-func TestExchangeWithClientFactory_NilDNSMessage(t *testing.T) {
+func TestExchange_NilDNSMessage(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "192.0.2.53"}
-
 	mockClient := new(MockDNSClient)
 	factory := func(protocol string) dnsClient {
 		return mockClient
 	}
+	ns := &nameserver{addr: "192.0.2.53", dnsClientFactory: factory}
 
 	ctx := context.TODO()
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, nil, factory)
+	response := ns.exchange(ctx, nil)
 
 	// Assertions
 	assert.ErrorIs(t, response.Err, ErrNilMessageSentToExchange)
 }
 
-func TestExchangeWithClientFactory_DNSClientError(t *testing.T) {
+func TestExchange_DNSClientError(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "192.0.2.53"}
 
 	mockClient := new(MockDNSClient)
 	factory := func(protocol string) dnsClient {
 		return mockClient
 	}
+	ns := &nameserver{addr: "192.0.2.53", dnsClientFactory: factory}
 
 	// Prepare the DNS message with a valid question
 	msg := new(dns.Msg)
@@ -86,27 +84,26 @@ func TestExchangeWithClientFactory_DNSClientError(t *testing.T) {
 	mockClient.On("ExchangeContext", ctx, msg, "192.0.2.53:53").Return((*dns.Msg)(nil), time.Duration(0), expectedError)
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, msg, factory)
+	response := ns.exchange(ctx, msg)
 
 	// Assertions
 	assert.Error(t, response.Err)
 	assert.Equal(t, expectedError, response.Err)
 }
 
-func TestExchangeWithClientFactory_UDPErrorFallbackToTCP(t *testing.T) {
+func TestExchange_UDPErrorFallbackToTCP(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "192.0.2.53"}
-
 	udpClient := new(MockDNSClient)
 	tcpClient := new(MockDNSClient)
 
-	// Define the factory to return the correct client for each protocol
+	// Define the dnsClientFactory to return the correct client for each protocol
 	factory := func(protocol string) dnsClient {
 		if protocol == "udp" {
 			return udpClient
 		}
 		return tcpClient
 	}
+	ns := &nameserver{addr: "192.0.2.53", dnsClientFactory: factory}
 
 	// Prepare the DNS message with a valid question
 	msg := new(dns.Msg)
@@ -121,7 +118,7 @@ func TestExchangeWithClientFactory_UDPErrorFallbackToTCP(t *testing.T) {
 	tcpClient.On("ExchangeContext", ctx, msg, "192.0.2.53:53").Return(expectedResponse, expectedDuration, nil).Once()
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, msg, factory)
+	response := ns.exchange(ctx, msg)
 
 	// Assertions
 	assert.NoError(t, response.Err)
@@ -131,20 +128,20 @@ func TestExchangeWithClientFactory_UDPErrorFallbackToTCP(t *testing.T) {
 	tcpClient.AssertNumberOfCalls(t, "ExchangeContext", 1)
 }
 
-func TestExchangeWithClientFactory_TruncatedResponseFallbackToTCP(t *testing.T) {
+func TestExchange_TruncatedResponseFallbackToTCP(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "192.0.2.53"}
 
 	udpClient := new(MockDNSClient)
 	tcpClient := new(MockDNSClient)
 
-	// Define the factory to return the correct client for each protocol
+	// Define the dnsClientFactory to return the correct client for each protocol
 	factory := func(protocol string) dnsClient {
 		if protocol == "udp" {
 			return udpClient
 		}
 		return tcpClient
 	}
+	ns := &nameserver{addr: "192.0.2.53", dnsClientFactory: factory}
 
 	// Prepare the DNS message with a valid question
 	msg := new(dns.Msg)
@@ -161,7 +158,7 @@ func TestExchangeWithClientFactory_TruncatedResponseFallbackToTCP(t *testing.T) 
 	tcpClient.On("ExchangeContext", ctx, msg, "192.0.2.53:53").Return(expectedResponse, expectedDuration, nil).Once()
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, msg, factory)
+	response := ns.exchange(ctx, msg)
 
 	// Assertions
 	assert.NoError(t, response.Err)
@@ -171,20 +168,19 @@ func TestExchangeWithClientFactory_TruncatedResponseFallbackToTCP(t *testing.T) 
 	tcpClient.AssertNumberOfCalls(t, "ExchangeContext", 1)
 }
 
-func TestExchangeWithClientFactory_BothUDPAndTCPReturnErrors(t *testing.T) {
+func TestExchange_BothUDPAndTCPReturnErrors(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "192.0.2.53"}
-
 	udpClient := new(MockDNSClient)
 	tcpClient := new(MockDNSClient)
 
-	// Define the factory to return the correct client for each protocol
+	// Define the dnsClientFactory to return the correct client for each protocol
 	factory := func(protocol string) dnsClient {
 		if protocol == "udp" {
 			return udpClient
 		}
 		return tcpClient
 	}
+	ns := &nameserver{addr: "192.0.2.53", dnsClientFactory: factory}
 
 	// Prepare the DNS message with a valid question
 	msg := new(dns.Msg)
@@ -199,7 +195,7 @@ func TestExchangeWithClientFactory_BothUDPAndTCPReturnErrors(t *testing.T) {
 	tcpClient.On("ExchangeContext", ctx, msg, "192.0.2.53:53").Return((*dns.Msg)(nil), time.Duration(0), tcpError).Once()
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, msg, factory)
+	response := ns.exchange(ctx, msg)
 
 	// Assertions
 	assert.Error(t, response.Err)
@@ -208,14 +204,14 @@ func TestExchangeWithClientFactory_BothUDPAndTCPReturnErrors(t *testing.T) {
 	tcpClient.AssertNumberOfCalls(t, "ExchangeContext", 1)
 }
 
-func TestExchangeWithClientFactory_IPv6AddressFormatting(t *testing.T) {
+func TestExchange_IPv6AddressFormatting(t *testing.T) {
 	// Setup
-	ns := &nameserver{addr: "2001:db8::1"}
-
 	mockClient := new(MockDNSClient)
 	factory := func(protocol string) dnsClient {
 		return mockClient
 	}
+
+	ns := &nameserver{addr: "2001:db8::1", dnsClientFactory: factory}
 
 	// Prepare the DNS message with a valid question
 	msg := new(dns.Msg)
@@ -229,11 +225,39 @@ func TestExchangeWithClientFactory_IPv6AddressFormatting(t *testing.T) {
 	mockClient.On("ExchangeContext", ctx, msg, "[2001:db8::1]:53").Return(expectedResponse, expectedDuration, nil).Once()
 
 	// Execute
-	response := ns.exchangeWithClientFactory(ctx, msg, factory)
+	response := ns.exchange(ctx, msg)
 
 	// Assertions
 	assert.NoError(t, response.Err)
 	assert.Equal(t, expectedResponse, response.Msg)
 	assert.Equal(t, expectedDuration, response.Duration)
 	mockClient.AssertNumberOfCalls(t, "ExchangeContext", 1)
+}
+
+func TestDefaultDnsClientFactory_UDP(t *testing.T) {
+
+	ns := &nameserver{addr: "2001:db8::1"}
+
+	client := ns.defaultDnsClientFactory("udp")
+	assert.IsType(t, new(dns.Client), client)
+	typedClient, ok := client.(*dns.Client)
+	assert.True(t, ok)
+	if ok {
+		assert.Equal(t, DefaultTimeoutUDP, typedClient.Timeout)
+	}
+
+}
+
+func TestDefaultDnsClientFactory_TCP(t *testing.T) {
+
+	ns := &nameserver{addr: "2001:db8::1"}
+
+	client := ns.defaultDnsClientFactory("tcp")
+	assert.IsType(t, new(dns.Client), client)
+	typedClient, ok := client.(*dns.Client)
+	assert.True(t, ok)
+	if ok {
+		assert.Equal(t, DefaultTimeoutTCP, typedClient.Timeout)
+	}
+
 }

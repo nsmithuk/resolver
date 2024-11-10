@@ -49,7 +49,13 @@ func validateNegativeResponse(ctx context.Context, r *result) (AuthenticationRes
 			so we don't check for it here.
 		*/
 
-		_, closestEncloserProof, nextCloserNameProof, wildcardProof := nsec3.PerformClosestEncloserProof(qname)
+		optout, closestEncloserProof, nextCloserNameProof, wildcardProof := nsec3.PerformClosestEncloserProof(qname)
+
+		// We'll support an opt-out only if the question was for DS records.
+		if optout && qtype == dns.TypeDS {
+			r.denialOfExistence = Nsec3OptOut
+			return Secure, nil
+		}
 
 		// Check for a NODATA response on a wildcard (if that's the only thing needed for the response to be Secure).
 		if closestEncloserProof && nextCloserNameProof && !wildcardProof {

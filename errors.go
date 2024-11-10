@@ -9,4 +9,7 @@ var (
 	ErrFailedToGetDNSKEYs        = errors.New("failed looking up DNSKEY records")
 	ErrFailedCreatingZoneAndPool = errors.New("failed creating nameserver pool for zone")
 	ErrFailedEnrichingPool       = errors.New("failed enriching nameserver pool for zone")
+	ErrUnableToResolveAnswer     = errors.New("failed resolving answer")
+	ErrEmptyResponse             = errors.New("the received response is empty")
+	ErrInternalError             = errors.New("internal error")
 )

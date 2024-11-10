@@ -68,3 +68,10 @@ func wildcardName(name string) string {
 func namesEqual(s1, s2 string) bool {
 	return dns.CanonicalName(s1) == dns.CanonicalName(s2)
 }
+
+func getOwnerNameFromSet(rr []dns.RR) (string, bool) {
+	if len(rr) > 0 {
+		return rr[0].Header().Name, true
+	}
+	return "", false
+}

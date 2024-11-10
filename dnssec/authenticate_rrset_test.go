@@ -3,6 +3,7 @@ package dnssec
 import (
 	"errors"
 	"github.com/miekg/dns"
+	"github.com/stretchr/testify/assert"
 	"net"
 	"slices"
 	"strings"
@@ -107,55 +108,6 @@ func TestAuthenticate_ValidWithTwoKeysAndTwoRRSets(t *testing.T) {
 	if valid := set.Valid(); !valid {
 		t.Error("expected set to be valid")
 	}
-}
-
-func TestAuthenticate_ValidWithUnsignedNSRecords(t *testing.T) {
-	// When authenticating the authority section at the point of a delegation, we don't expect the NS records to be signed,
-	// but the DS records should be.
-	// We also test ErrUnexpectedSignatureCount here as the same records in the answer section should fail.
-
-	rrset1 := []dns.RR{
-		newRR("example.com. 3600 IN NS ns1.example.com."),
-		newRR("example.com. 3600 IN NS ns2.example.com."),
-	}
-	rrset2 := []dns.RR{
-		newRR("example.com. 3600 IN DS 14056 13 2 5BF7C0CBEC31298BD4BACDE9EBCE1C3A990576D9B581191D6FFBC87FC552AC61"),
-	}
-
-	key := testEcKey()
-
-	rrset2 = append(rrset2, key.sign(rrset2, 0, 0))
-
-	set, err := authenticate(zoneName, slices.Concat(rrset1, rrset2), []*dns.DNSKEY{key.key}, authoritySection)
-	if err != nil {
-		t.Error(err)
-	}
-
-	if len(set) != 1 {
-		t.Errorf("expected length of set to be 1, but got %d", len(set))
-	}
-
-	if err := set.Verify(); err != nil {
-		t.Errorf("unexpected error when calling Verify(): %s", err.Error())
-	}
-
-	if valid := set.Valid(); !valid {
-		t.Error("expected set to be valid")
-	}
-
-	//---
-
-	// If the same records were part of an answer section, we'd expect it to fail as not all RRSETs have a RRSIG.
-
-	_, err = authenticate(zoneName, slices.Concat(rrset1, rrset2), []*dns.DNSKEY{key.key}, answerSection)
-	if err == nil {
-		t.Error("error expected but not found")
-	}
-
-	if !errors.Is(err, ErrUnexpectedSignatureCount) {
-		t.Errorf("expected error to be ErrUnexpectedSignatureCount")
-	}
-
 }
 
 func TestAuthenticate_ValidWildcard(t *testing.T) {
@@ -512,4 +464,173 @@ PrivateKey: ho9mEVla4jjpbC5DoebVqsmvqWtFc074kENkCW86gPg=`,
 		// But we exlect it to be nil by the end of the verify.
 		t.Error("expected signature error to be nil")
 	}
+}
+
+func TestAuthenticate_ValidWithUnsignedNSRecords(t *testing.T) {
+	// When authenticating the authority section at the point of a delegation, we don't
+	// always expect the NS records to be signed, but the DS records should be.
+	// Note that DS records not being signed is optional - they _can_ be signed.
+	// We also test ErrUnexpectedSignatureCount here as the same records in the answer section should fail.
+
+	rrset1 := []dns.RR{
+		newRR("example.com. 3600 IN NS ns1.example.com."),
+		newRR("example.com. 3600 IN NS ns2.example.com."),
+	}
+	rrset2 := []dns.RR{
+		newRR("example.com. 3600 IN DS 14056 13 2 5BF7C0CBEC31298BD4BACDE9EBCE1C3A990576D9B581191D6FFBC87FC552AC61"),
+	}
+
+	key := testEcKey()
+
+	rrset2 = append(rrset2, key.sign(rrset2, 0, 0))
+
+	set, err := authenticate(zoneName, slices.Concat(rrset1, rrset2), []*dns.DNSKEY{key.key}, authoritySection)
+	if err != nil {
+		t.Error(err)
+	}
+
+	if len(set) != 1 {
+		t.Errorf("expected length of set to be 1, but got %d", len(set))
+	}
+
+	if err := set.Verify(); err != nil {
+		t.Errorf("unexpected error when calling Verify(): %s", err.Error())
+	}
+
+	if valid := set.Valid(); !valid {
+		t.Error("expected set to be valid")
+	}
+
+	//---
+
+	// If the same records were part of an answer section, we'd expect it to fail as not all RRSETs have a RRSIG.
+
+	_, err = authenticate(zoneName, slices.Concat(rrset1, rrset2), []*dns.DNSKEY{key.key}, answerSection)
+	if err == nil {
+		t.Error("error expected but not found")
+	}
+
+	if !errors.Is(err, ErrUnexpectedSignatureCount) {
+		t.Errorf("expected error to be ErrUnexpectedSignatureCount")
+	}
+
+}
+
+func TestAuthenticate_ValidWithSignedNSRecords(t *testing.T) {
+	// Test the edge case where NS records in the authority section are signed.
+	// For example: dig @l.gtld-servers.net. naughty-nameserver.com. DS +dnssec
+
+	rrset1 := []dns.RR{
+		newRR("example.com. 3600 IN NS ns1.example.com."),
+		newRR("example.com. 3600 IN NS ns2.example.com."),
+	}
+	rrset2 := []dns.RR{
+		newRR("example.com. 3600 IN DS 14056 13 2 5BF7C0CBEC31298BD4BACDE9EBCE1C3A990576D9B581191D6FFBC87FC552AC61"),
+	}
+
+	key := testEcKey()
+
+	rrset1 = append(rrset1, key.sign(rrset1, 0, 0))
+	rrset2 = append(rrset2, key.sign(rrset2, 0, 0))
+
+	set, err := authenticate(zoneName, slices.Concat(rrset1, rrset2), []*dns.DNSKEY{key.key}, authoritySection)
+	if err != nil {
+		t.Error(err)
+	}
+
+	if len(set) != 2 {
+		t.Errorf("expected length of set to be 2, but got %d", len(set))
+	}
+
+	if err := set.Verify(); err != nil {
+		t.Errorf("unexpected error when calling Verify(): %s", err.Error())
+	}
+
+	if valid := set.Valid(); !valid {
+		t.Error("expected set to be valid")
+	}
+
+}
+
+func TestAuthenticate_ValidWithMultipleRRSigsForSameRRSet(t *testing.T) {
+	/*
+		For example:
+		dig glb.nist.gov. DNSKEY +dnssec
+
+		; <<>> DiG 9.10.6 <<>> glb.nist.gov. DNSKEY +dnssec
+		;; global options: +cmd
+		;; Got answer:
+		;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1580
+		;; flags: qr rd ra ad; QUERY: 1, ANSWER: 6, AUTHORITY: 0, ADDITIONAL: 1
+
+		;; OPT PSEUDOSECTION:
+		; EDNS: version: 0, flags: do; udp: 1232
+		;; QUESTION SECTION:
+		;glb.nist.gov.			IN	DNSKEY
+
+		;; ANSWER SECTION:
+		glb.nist.gov.		86400	IN	DNSKEY	256 3 7 AwEAAdPuokc5nFzMaxwm9AuuHdZc1ECf7VZjMBW0/rDREonG+8sTihJ6 Vq9nw/yJ8dCzYvlwAyJ224OnfFeU5i8nz17xawYa6Ebhvj3XX4P8CAWB EIi5EJKxP1aYhm+jghiEL3jEoRDTIphY5koEq4O2g+WfRTmTshGbB2/T f89mSAw5
+		glb.nist.gov.		86400	IN	DNSKEY	257 3 7 AwEAAbPrgxVFi42DjlUUzWeFZ3HH6DzpYGI5yO89vD4IPrZFYiemBn51 PaCU9SzdbsDhH8jlEUo95ViKHlQW4Ktplj4IHYCugiHy+EC5UC62FK6F TDfGLEHIbOf8A3/Nlkc6xtJ/J6xcxxTeM3Qn8nUJIt33w7bfZmxBC+qH oRHBJU9CuZikAnAdPkYuKvp2plxpHbu+eqofiTrvlynU84jLukco0/J5 IeTt5bdpgdaOV/GrGnqwdm1B/1rmMyapRHdsfpxXaFcp6oYwhcsiL5yY izjSmm3CiHQ7lOZFEQYdCzd7f/tM1vMJQN5ocVoQe4YzwicrtT+Pj4Is X7ZBjnKjmCk=
+		glb.nist.gov.		86400	IN	DNSKEY	257 3 7 AwEAAay9EcPmXxaHuWKjwZCesahBer2Mbp+ySbo/830nIQqIIYYaQLg+ J5lbBtnbXTd51uKjXrqGr3hwgt3efXtWeivkYpNp86j7PvwQn+AodfcO p6SHzZDLihXZY/mfwW5uO6Uzm8u78Op+tdRP9MX/oo47DqLPTw40VB36 B718A9PDCq+TXfaqo3tFJxZgaRswTPF83+8pmbMYwjHNfwgdzYAyV4yb WxCYnNb3q1Xd7pNA3FScjqpyCcBOoIKM/5qSYkAUIhqDk4GtzwLQfkk7 PdkwjTi4nxuNYzqLdQkuzrBQPw9uQsUqCM69WmGwflJCe7EghPlBhDOo n4KBR/2+1a0=
+		glb.nist.gov.		86400	IN	RRSIG	DNSKEY 7 3 86400 20241111063157 20241104053157 49100 glb.nist.gov. iXsJkPzlJl1FkBX1NCF9LhSsUnfd/Mh2NRQb6ahOj220Xp3QZzX9yfuR EJgwQoe9+8dYDU5njJ+mA3SwdskyM9CKjDVsH9NWgJVIUszzAuneVN3i XOW6oUkbeWvvlGEUy5XMwqgMQBxKUJCf9/RW+jYYk3kOQjn3d6i399AC +FE=
+		glb.nist.gov.		86400	IN	RRSIG	DNSKEY 7 3 86400 20241109063156 20241101053156 56235 glb.nist.gov. LwSFwMJqkte7m1eS+wUhRE5gxOLrq+jkDIispIkL4c72sdP3ZYlMK+NW ZGNYtL1syES47LPqfOWvhIb6hLpKUbpwWNGpw0cpB21/eb9LAP0sYP0R p30YYYvOJuBE0YxNdhWq/KF5CMagVfOYkpBsCsA0z12kBrO1VK7NpsXj kziCfKQUrlxXxECkSwr16FcKvkXc8OpM7CaIZhIYi95uBuuImjWjPUDD 1aYani9RqYqnzJpcmNE9OhLEGGcV5xknU59FV9Qb3XvAV1ndstpy8U2O +lwqIYm0SQr+FD73D+dyL1MTGmdU3v4/cXTVc5+CTbaUJppkVa1JntG+ RaDXXQ==
+		glb.nist.gov.		86400	IN	RRSIG	DNSKEY 7 3 86400 20241109063156 20241101053156 57306 glb.nist.gov. h1SV0GVgKc0HHDyKTKfqJZQXXlMAhlOFuFPxXkEjW3t9CtMhc6BQYAdf 6Wl0sv/RL44Ll4f3Y3n6ge+fpyvQya2BvcLK0GgHCFQuYfub8/stGxbE AH6yamoO30BDL/D967jaO0wfHMoTCueph6zwcYD1FOXAsl2BIenY5v/4 FqWfcxrUKmGhm4g1GrR0yTj8THGnkBPcYn8QowoVCjqKKR3rPT5lCu4f Kv0GzLR8Ty8ZOqt9PZqSg/5R1awPw8NGLFiyOh/sQV42K1uDLpbPy6Tc wD5Zkc4e/6Ytra5BWwRu+l74Y9rMOjw7bKf3i5XEKRychOe1SoFvyPu8 8fZFwQ==
+	*/
+
+	rrset := []dns.RR{
+		newRR("example.com. 3600 IN MX 10 mx1.example.com."),
+		newRR("example.com. 3600 IN MX 10 mx2.example.com."),
+	}
+
+	// We sign the same set with 3 different keys.
+
+	key1 := testEcKey()
+	key2 := testEcKey()
+	key3 := testEcKey()
+
+	rrset1 := append(rrset, key1.sign(rrset, 0, 0))
+	rrset2 := append(rrset, key2.sign(rrset, 0, 0))
+	rrset3 := append(rrset, key3.sign(rrset, 0, 0))
+	combined := dns.Dedup(slices.Concat(rrset1, rrset2, rrset3), nil)
+
+	set, err := authenticate(zoneName, combined, []*dns.DNSKEY{key1.key, key2.key, key3.key}, answerSection)
+	assert.NoError(t, err)
+
+	assert.Len(t, set, 3)
+	assert.True(t, set.Valid())
+	assert.NoError(t, set.Verify())
+
+	assert.False(t, set[0].wildcard)
+	assert.False(t, set[1].wildcard)
+	assert.False(t, set[2].wildcard)
+}
+
+func TestAuthenticate_ValidWithMultipleRRSetsOfSameTypeDifferentName(t *testing.T) {
+
+	rrset1 := []dns.RR{
+		newRR("a.example.com. 3600 IN CNAME b.example.com."),
+	}
+	rrset2 := []dns.RR{
+		newRR("b.example.com. 3600 IN CNAME c.example.com."),
+	}
+	rrset3 := []dns.RR{
+		newRR("c.example.com. 3600 IN A 192.0.2.53"),
+	}
+
+	key := testEcKey()
+
+	rrset1 = append(rrset1, key.sign(rrset1, 0, 0))
+	rrset2 = append(rrset2, key.sign(rrset2, 0, 0))
+	rrset3 = append(rrset3, key.sign(rrset3, 0, 0))
+
+	set, err := authenticate(zoneName, slices.Concat(rrset1, rrset2, rrset3), []*dns.DNSKEY{key.key}, answerSection)
+	assert.NoError(t, err)
+
+	assert.Len(t, set, 3)
+	assert.True(t, set.Valid())
+	assert.NoError(t, set.Verify())
+
+	assert.False(t, set[0].wildcard)
+	assert.False(t, set[1].wildcard)
+	assert.False(t, set[2].wildcard)
 }

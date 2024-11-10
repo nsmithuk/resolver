@@ -37,6 +37,9 @@ func createZone(ctx context.Context, name string, nameservers []*dns.NS, extra [
 
 	Debug(fmt.Sprintf("new zone created [%s]", name))
 
+	// TODO: It would be good if we validated, via DNSSEC, nameserver details. Perhaps we could go do this.
+	// And use low TTLs until it's done.
+
 	return z, nil
 }
 

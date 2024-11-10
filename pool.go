@@ -1,8 +1,6 @@
 package resolver
 
 import (
-	"context"
-	"fmt"
 	"github.com/miekg/dns"
 	"slices"
 	"sync"
@@ -23,16 +21,18 @@ const (
 type nameserverPool struct {
 	hostsWithoutAddresses []string
 
-	ipv4     []exchanger
-	ipv4Next atomic.Uint32
+	ipv4      []exchanger
+	ipv4Next  atomic.Uint32
+	ipv4Count atomic.Uint32
 
-	ipv6     []exchanger
-	ipv6Next atomic.Uint32
+	ipv6      []exchanger
+	ipv6Next  atomic.Uint32
+	ipv6Count atomic.Uint32
 
 	updating sync.RWMutex
 	enriched sync.Once
 
-	expires time.Time
+	expires atomic.Int64
 }
 
 func (pool *nameserverPool) hasIPv4() bool {
@@ -43,44 +43,46 @@ func (pool *nameserverPool) hasIPv6() bool {
 	return pool.countIPv6() > 0
 }
 
-func (pool *nameserverPool) countIPv4() int {
-	pool.updating.RLock()
-	c := len(pool.ipv4)
-	pool.updating.RUnlock()
-	return c
+func (pool *nameserverPool) countIPv4() uint32 {
+	return pool.ipv4Count.Load()
 }
 
-func (pool *nameserverPool) countIPv6() int {
-	pool.updating.RLock()
-	c := len(pool.ipv6)
-	pool.updating.RUnlock()
-	return c
+func (pool *nameserverPool) countIPv6() uint32 {
+	return pool.ipv6Count.Load()
 }
 
 func (pool *nameserverPool) getIPv4() exchanger {
-	pool.updating.RLock()
-	defer pool.updating.RUnlock()
-
 	if pool.hasIPv4() {
 		// Increments to the next server each time.
 		// There's a race condition here, but the outcome isn't "important" enough to warrant locking.
-		ipv4Next := pool.ipv4Next.Load() % uint32(len(pool.ipv4))
+		ipv4Next := pool.ipv4Next.Load() % pool.countIPv4()
 		pool.ipv4Next.Store(ipv4Next + 1)
-		return pool.ipv4[ipv4Next]
+
+		var ex exchanger
+		pool.updating.RLock()
+		if int(ipv4Next) < len(pool.ipv4) {
+			ex = pool.ipv4[ipv4Next]
+		}
+		pool.updating.RUnlock()
+		return ex
 	}
 	return nil
 }
 
 func (pool *nameserverPool) getIPv6() exchanger {
-	pool.updating.RLock()
-	defer pool.updating.RUnlock()
-
 	if pool.hasIPv6() {
 		// Increments to the next server each time.
 		// There's a race condition here, but the outcome isn't "important" enough to warrant locking.
-		ipv6Next := pool.ipv6Next.Load() % uint32(len(pool.ipv6))
+		ipv6Next := pool.ipv6Next.Load() % pool.countIPv6()
 		pool.ipv6Next.Store(ipv6Next + 1)
-		return pool.ipv6[ipv6Next]
+
+		var ex exchanger
+		pool.updating.RLock()
+		if int(ipv6Next) < len(pool.ipv6) {
+			ex = pool.ipv6[ipv6Next]
+		}
+		pool.updating.RUnlock()
+		return ex
 	}
 	return nil
 }
@@ -88,18 +90,16 @@ func (pool *nameserverPool) getIPv6() exchanger {
 //---
 
 func (pool *nameserverPool) expired() bool {
-	pool.updating.RLock()
-	b := !pool.expires.IsZero() && pool.expires.Before(time.Now())
-	pool.updating.RUnlock()
-	return b
+	expires := pool.expires.Load()
+	return expires > 0 && expires < time.Now().Unix()
 }
 
 func (pool *nameserverPool) status() NameserverPoolStatus {
 	pool.updating.RLock()
 	defer pool.updating.RUnlock()
 
-	ipv4Count := pool.countIPv4()
-	ipv6Count := pool.countIPv6()
+	ipv4Count := len(pool.ipv4)
+	ipv6Count := len(pool.ipv6)
 
 	if ipv4Count == 0 && ipv6Count == 0 && len(pool.hostsWithoutAddresses) == 0 {
 		return PoolEmpty
@@ -130,11 +130,6 @@ func newNameserverPool(nameservers []*dns.NS, extra []dns.RR) *nameserverPool {
 
 	for _, rr := range nameservers {
 		hostname := canonicalName(rr.Ns)
-
-		if hostname == "b.gtld-servers.net." {
-			// I don't like this server.
-			continue
-		}
 
 		ttl = min(rr.Header().Ttl, ttl)
 
@@ -169,32 +164,12 @@ func newNameserverPool(nameservers []*dns.NS, extra []dns.RR) *nameserverPool {
 
 	pool.hostsWithoutAddresses = slices.Clip(pool.hostsWithoutAddresses)
 
-	pool.expires = time.Now().Add(time.Duration(ttl) * time.Second)
+	expires := time.Now().Add(time.Duration(ttl) * time.Second)
+	pool.expires.Store(expires.Unix())
+
+	pool.updateIPCount()
 
 	return pool
-}
-
-func findAddressesForHostname(hostname string, records []dns.RR) ([]*dns.A, []*dns.AAAA, uint32) {
-	a := make([]*dns.A, 0, len(records))
-	aaaa := make([]*dns.AAAA, 0, len(records))
-
-	var ttl = MaxTTLAllowed
-
-	for _, rr := range records {
-		if canonicalName(rr.Header().Name) != hostname {
-			continue
-		}
-		switch addr := rr.(type) {
-		case *dns.A:
-			a = append(a, addr)
-			ttl = min(rr.Header().Ttl, ttl)
-		case *dns.AAAA:
-			aaaa = append(aaaa, addr)
-			ttl = min(rr.Header().Ttl, ttl)
-		}
-	}
-
-	return a, aaaa, ttl
 }
 
 func (pool *nameserverPool) enrich(records []dns.RR) {
@@ -236,54 +211,47 @@ func (pool *nameserverPool) enrich(records []dns.RR) {
 		}
 	}
 
-	if !pool.expires.IsZero() {
+	if pool.expires.Load() > 0 {
 		expires := time.Now().Add(time.Duration(ttl) * time.Second)
-		if expires.Before(pool.expires) {
-			pool.expires = expires
-		}
+		pool.expires.Store(expires.Unix())
 	}
+
+	//if !pool.expires.IsZero() {
+	//	expires := time.Now().Add(time.Duration(ttl) * time.Second)
+	//	if expires.Before(pool.expires) {
+	//		pool.expires = expires
+	//	}
+	//}
 
 	pool.hostsWithoutAddresses = slices.Clip(hostnamesStillWithoutAddresses)
+
+	pool.updateIPCount()
 }
 
-func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) *Response {
-	switch pool.status() {
-	case PoolPrimed:
-	case PrimedButNeedsEnhancing:
-	default:
-		return ResponseError(fmt.Errorf("server pool not setup"))
-	}
+func (pool *nameserverPool) updateIPCount() {
+	pool.ipv4Count.Store(uint32(len(pool.ipv4)))
+	pool.ipv6Count.Store(uint32(len(pool.ipv6)))
+}
 
-	var response *Response
+func findAddressesForHostname(hostname string, records []dns.RR) ([]*dns.A, []*dns.AAAA, uint32) {
+	a := make([]*dns.A, 0, len(records))
+	aaaa := make([]*dns.AAAA, 0, len(records))
 
-	if pool.hasIPv6() && IPv6Available() {
-		if server := pool.getIPv6(); server != nil {
-			response = server.exchange(ctx, m)
+	var ttl = MaxTTLAllowed
+
+	for _, rr := range records {
+		if canonicalName(rr.Header().Name) != hostname {
+			continue
 		}
-	} else {
-		if server := pool.getIPv4(); server != nil {
-			response = server.exchange(ctx, m)
-		}
-	}
-
-	if response.Empty() || response.Error() || response.truncated() {
-		// If there was an issue, we give it one more try.
-		// If we have more than one nameserver, this will try a different one.
-		if pool.hasIPv4() {
-			if server := pool.getIPv4(); server != nil {
-				response = server.exchange(ctx, m)
-			}
-		} else if pool.hasIPv6() {
-			if server := pool.getIPv6(); server != nil {
-				response = server.exchange(ctx, m)
-			}
+		switch addr := rr.(type) {
+		case *dns.A:
+			a = append(a, addr)
+			ttl = min(rr.Header().Ttl, ttl)
+		case *dns.AAAA:
+			aaaa = append(aaaa, addr)
+			ttl = min(rr.Header().Ttl, ttl)
 		}
 	}
 
-	if response.Empty() && !response.Error() {
-		// If we get an empty response without an error, we'll add an error.
-		response.Err = fmt.Errorf("no nameserver setup for %s", m.Question[0].Name)
-	}
-
-	return response
+	return a, aaaa, ttl
 }

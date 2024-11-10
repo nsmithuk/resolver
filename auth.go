@@ -6,80 +6,107 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/nsmithuk/resolver/dnssec"
+	"sync"
+	"sync/atomic"
 )
 
 type authenticator struct {
 	ctx  context.Context
 	auth *dnssec.Authenticator
+
+	errors []error
+
+	closeOnce  sync.Once
+	queue      chan authenticatorInput
+	finished   atomic.Bool
+	processing *sync.WaitGroup
+}
+
+type authenticatorInput struct {
+	z   *zone
+	msg *dns.Msg
 }
 
 func newAuthenticator(ctx context.Context, question dns.Question) *authenticator {
 	a := dnssec.NewAuth(ctx, question)
-	return &authenticator{
-		ctx:  ctx,
-		auth: a,
+	auth := &authenticator{
+		ctx:        ctx,
+		auth:       a,
+		errors:     make([]error, 0),
+		queue:      make(chan authenticatorInput, 8),
+		processing: &sync.WaitGroup{},
 	}
+	go auth.start()
+	return auth
+}
+
+func (a *authenticator) close() {
+	a.closeOnce.Do(func() {
+		a.finished.Store(true)
+		a.processing.Wait()
+		close(a.queue)
+		a.queue = nil
+	})
+}
+
+func (a *authenticator) addDelegationSignerLink(z *zone, qname string) {
+	if a.finished.Load() {
+		return
+	}
+	a.processing.Add(1)
+	go func() {
+		defer a.processing.Done()
+
+		go z.dnsKeys(a.ctx)
+
+		dsMsg := new(dns.Msg)
+		dsMsg.SetQuestion(dns.Fqdn(qname), dns.TypeDS)
+		dsMsg.SetEdns0(4096, true)
+		dsMsg.RecursionDesired = false
+		response := z.Exchange(a.ctx, dsMsg)
+		if !response.Empty() && !response.Error() {
+			a.processing.Add(1)
+			a.queue <- authenticatorInput{z, response.Msg}
+		}
+	}()
 }
 
 func (a *authenticator) addResponse(z *zone, msg *dns.Msg) error {
-	return a.addResponseWhilstFixingMissingRecords(z, msg, 0)
+	if a.finished.Load() {
+		return nil
+	}
+	a.processing.Add(1)
+	a.queue <- authenticatorInput{z, msg}
+	return nil
 }
 
-func (a *authenticator) addResponseWhilstFixingMissingRecords(z *zone, msg *dns.Msg, iteration uint8) error {
-	if iteration > 5 {
-		return errors.New("iteration too big")
-	}
-
-	err := a.auth.AddResponse(&authZoneWrapper{ctx: a.ctx, zone: z}, msg)
-
-	if err != nil {
-		var missing *dnssec.MissingDSRecordError
-		if errors.As(err, &missing) {
-			name := missing.RName()
-			return a.lookupDSRecordAndRetry(z, name, msg, iteration)
+func (a *authenticator) start() {
+	for in := range a.queue {
+		err := a.auth.AddResponse(&authZoneWrapper{ctx: a.ctx, zone: in.z}, in.msg)
+		if err != nil {
+			// `Errors` is only accessible from this thread when processing is !Done().
+			a.errors = append(a.errors, err)
 		}
+		a.processing.Done()
 	}
-
-	return err
-}
-
-func (a *authenticator) lookupDSRecordAndRetry(z *zone, missingDSZone string, original *dns.Msg, iteration uint8) error {
-	zoneForRetriedMsg := z.clone(missingDSZone)
-
-	// We can prefetch this DNSKEY whilst we're looking up the missing DS record.
-	go zoneForRetriedMsg.dnsKeys(a.ctx)
-
-	/*
-		Note that we retain the parent nameserver pool because:
-		Also note: https://datatracker.ietf.org/doc/html/rfc4035#section-4.2
-		"When attempting to retrieve missing NSEC RRs that reside on the
-		parental side at a zone cut, a security-aware iterative-mode resolver
-		MUST query the name servers for the parent zone, not the child zone."
-	*/
-
-	qmsg := new(dns.Msg)
-	qmsg.SetQuestion(dns.Fqdn(missingDSZone), dns.TypeDS)
-	qmsg.SetEdns0(4096, true)
-	qmsg.RecursionDesired = false
-	response := z.Exchange(a.ctx, qmsg)
-	if response.Error() {
-		return response.Err
-	}
-	if response.Empty() {
-		return fmt.Errorf("no answers retured for DS lookup [%s]", missingDSZone)
-	}
-
-	// Add the new response from the DS lookup.
-	err := a.addResponseWhilstFixingMissingRecords(z, response.Msg, iteration)
-	if err != nil {
-		return err
-	}
-
-	// Retry the original message.
-	return a.addResponseWhilstFixingMissingRecords(zoneForRetriedMsg, original, iteration+1)
 }
 
 func (a *authenticator) result() (dnssec.AuthenticationResult, dnssec.DenialOfExistenceState, error) {
+	a.finished.Store(true)
+	a.processing.Wait()
+	a.close()
+
+	// `Errors` is only accessible from this thread once we've finished Wait().
+	if len(a.errors) > 0 {
+		if len(a.errors) == 1 {
+			return 0, 0, a.errors[0]
+		}
+		err := errors.New("multiple errors found: ")
+		for _, e := range a.errors {
+			err = fmt.Errorf("%w: %w", err, e)
+		}
+	}
+
 	return a.auth.Result()
 }
 

@@ -15,6 +15,21 @@ func (ss signatures) filterOnType(rtype uint16) signatures {
 	return set
 }
 
+func (ss signatures) countNameTypeCombinations() int {
+	type combination struct {
+		name   string
+		rrtype uint16
+	}
+	combinations := make(map[combination]bool, len(ss))
+	for _, sig := range ss {
+		combinations[combination{
+			name:   sig.name,
+			rrtype: sig.rtype,
+		}] = true
+	}
+	return len(combinations)
+}
+
 // Verify a signature set. For a set to be valid, all signatures within it must be valid. A nil error will be returned in this case.
 // If one or more errors are found, we make the local policy decision to conclude the whole response is invalid.
 // All errors will be returns, wrapped into a single error.
@@ -25,6 +40,8 @@ func (ss signatures) filterOnType(rtype uint16) signatures {
 //	policy determines whether the resolver also has to test these RRSIG
 //	RRs and how to resolve conflicts if these RRSIG RRs lead to differing
 //	results.
+//
+// TODO: It seems the norm is to accept one or more valid RRSIG per RRSET.
 func (ss signatures) Verify() error {
 	if len(ss) == 0 {
 		return ErrSignatureSetEmpty

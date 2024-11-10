@@ -9,11 +9,6 @@ import (
 	"time"
 )
 
-// CountZones metrics gathering.
-func (resolver *Resolver) CountZones() int {
-	return resolver.zones.count()
-}
-
 // We have a public Exchange(), so people can call it.
 // And a private exchange(), to meet the exchanger interface.
 
@@ -27,202 +22,294 @@ func (resolver *Resolver) Exchange(ctx context.Context, qmsg *dns.Msg) *Response
 }
 
 func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response {
+
+	//----------------------------------------------------------------------------
+	// We setup our context
+
 	start := time.Now()
-
-	// We never expect/want our own queries to be recursive.
-	qmsg.RecursionDesired = false
-
-	// iteration counts the number of times this context has been passed into this exchange(). Mostly helpful for logging.
-	iteration, _ := ctx.Value(ctxIteration).(uint32)
-	ctx = context.WithValue(ctx, ctxIteration, iteration+1)
+	if v := ctx.Value(ctxStartTime); v == nil {
+		ctx = context.WithValue(ctx, ctxStartTime, start)
+	}
 
 	//---
 
-	// counter tracks the number of times the loop in this method has iterated, across all calls to exchange(), for this context.
-	// Its job is preventing infinite loops.
+	trace, ok := ctx.Value(CtxTrace).(*Trace)
+	if !ok {
+		trace = newTraceWithStart(start)
+		ctx = context.WithValue(ctx, CtxTrace, trace)
+		Debug(fmt.Sprintf("New query started with Trace ID: %s", trace.SortID()))
+	}
+
+	trace.Iterations.Add(1)
+
+	//---
+
+	// counter tracts the number of iterations we've seen of the main query loop - the one at the end of this function.
+	// Its value persists across all call to resolver.exchange(), for a given query.
+	// Its job is to detect/prevent infinite loops.
 	counter, ok := ctx.Value(ctxSessionQueries).(*atomic.Uint32)
 	if !ok {
 		counter = new(atomic.Uint32)
 		ctx = context.WithValue(ctx, ctxSessionQueries, counter)
 	}
 
-	//---
-
-	// channel onto which response are placed as they come in.
-	channel := make(chan *Response)
+	//----------------------------------------------------------------------------
+	// We setup the DNSSEC Authenticator
 
 	// If the DO flag is set, we create a DNSSEC Authenticator.
 	var auth *authenticator
 	if isSetDO(qmsg) {
 		auth = newAuthenticator(ctx, qmsg.Question[0])
+		defer auth.close()
 	}
 
-	// Start from the root
-	z := resolver.zones.get(".")
+	//----------------------------------------------------------------------------
+	// We determine what zones we already know about for the QName
 
-	// Only all n lookups before we give up...
-	for counter.Add(1) <= MaxQueriesPerRequest {
+	// Returns a list zones that make up the QName that we already have nameservers for.
+	// Items are only included is we have a valid chain from leaf to root.
+	// They are ordered most specific (i.e. longest FQDN), to shortest.
+	// The last element will always be the root (.).
+	knownZones := resolver.zones.getZoneList(qmsg.Question[0].Name)
 
-		if auth != nil {
-			// If we're going to need the DNSKEY, we can pre-fetch it.
-			go z.dnsKeys(ctx)
+	if auth != nil {
+		// Lookup the DNSSEC details for these zones.
+		// We don't do this lookup for the root, thus len()-1.
+		for i := 0; i < len(knownZones)-1; i++ {
+			// We never look directly at the first zone.
+			z := knownZones[i+1]
+			dsName := knownZones[i].name
+			auth.addDelegationSignerLink(z, dsName)
+		}
+	}
+
+	//----------------------------------------------------------------------------
+	// We iterate through the QName labels, exchanging the question with each zone.
+
+	d := newDomain(qmsg.Question[0].Name)
+
+	// Wind past all the zones that we already know about (if any).
+	if err := d.windTo(knownZones[0].name); err != nil {
+		return ResponseError(err)
+	}
+
+	var response *Response
+
+	// We track the last zone, as that's were we pass the query for the next label.
+	last := knownZones[0]
+
+	for ; !d.end(); d.next() {
+		if counter.Add(1) > MaxQueriesPerRequest {
+			return ResponseError(fmt.Errorf("too many iterations"))
 		}
 
-		// lookup in the current zone
-		go func(q *dns.Msg) {
-			channel <- z.Exchange(ctx, q)
-		}(qmsg)
+		last, response = resolver.funcs.resolveLabel(ctx, &d, last, qmsg, auth)
+		if response != nil {
+			return response
+		}
+	}
 
-		select {
-		case response := <-channel:
-			if !response.Empty() {
-				response.Msg.RecursionAvailable = true
-			}
+	return ResponseError(ErrUnableToResolveAnswer)
+}
 
-			if response.Error() {
-				return response
-			}
+func (resolver *Resolver) resolveLabel(ctx context.Context, d *domain, z *zone, qmsg *dns.Msg, auth *authenticator) (*zone, *Response) {
+	c := d.current()
 
-			if response.Empty() {
-				return &Response{
-					Err: fmt.Errorf("nil was returned from the exchange, without an error. mysterious"),
-				}
-			}
+	if next := resolver.zones.get(c); next != nil {
+		// If we already know of the zone for the current name, and there are still more labels in teh QName
+		// to check, then we can return where.
+		// Note that the DS records will already have been requested in Step 1.
+		if d.more() {
+			return next, nil
+		}
+	}
+
+	if z == nil {
+		// This is a sense check; it _should_ never happen.
+		return nil, ResponseError(fmt.Errorf("%w: zone cannot be nil at this point", ErrInternalError))
+	}
+
+	if auth != nil {
+		// If we're going to need the DNSKEY, we can pre-fetch it.
+		go z.dnsKeys(ctx)
+	}
+
+	response := z.Exchange(ctx, qmsg)
+
+	if !response.Empty() {
+		response.Msg.RecursionAvailable = true
+	}
+
+	if response.Error() {
+		return nil, response
+	}
+
+	if response.Empty() {
+		return nil, ResponseError(fmt.Errorf("nil was returned from the exchange, without an error. mysterious"))
+	}
+
+	//---
+
+	records := append(response.Msg.Ns, response.Msg.Answer...)
+	if len(records) == 0 {
+		return nil, &Response{
+			Err: fmt.Errorf("no records found. we don't know where to go next"),
+		}
+	}
+
+	nextRecordsOwner := canonicalName(records[0].Header().Name)
+
+	// We expect the zone name to be a subdomain of the current zone (and also not the same as the current zone).
+	if !dns.IsSubDomain(z.name, nextRecordsOwner) {
+		return nil, &Response{
+			Err: fmt.Errorf("unexpected next zone name [%s] after [%s]", nextRecordsOwner, z.name),
+		}
+	}
+
+	missingZoneNames := d.gap(nextRecordsOwner)
+	for _, missingDomain := range missingZoneNames {
+
+		soa, err := z.soa(ctx, missingDomain)
+
+		// If a SOA was found, then the missingDomain is its own zone.
+		if err == nil && soa != nil {
+
+			newZone := z.clone(missingDomain)
+			newZone.parent = z.name
 
 			if auth != nil {
-				err := auth.addResponse(z, response.Msg)
-				if err != nil {
-					return &Response{
-						Err: fmt.Errorf("error passing response to dnssec authenticator: %w", err),
-					}
-				}
+				auth.addDelegationSignerLink(z, newZone.name)
 			}
 
-			//---
+			resolver.zones.add(newZone)
+			z = newZone
 
-			// If an answer claims to be authoritative, or if we're given a SOA in the Authority, then we can return it.
-			if response.Msg.Authoritative || recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
-				if auth != nil {
-
-					authTime := time.Now()
-					response.Auth, response.Deo, response.Err = auth.result()
-					Info(fmt.Sprintf("Wait time for DNSSEC result: %s", time.Since(authTime)))
-
-					/*
-						TODO
-						   If the resolver accepts the RRset as authentic, the validator MUST
-						   set the TTL of the RRSIG RR and each RR in the authenticated RRset to
-						   a value no greater than the minimum of:
-						   o  the RRset's TTL as received in the response;
-						   o  the RRSIG RR's TTL as received in the response;
-						   o  the value in the RRSIG RR's Original TTL field; and
-						   o  the difference of the RRSIG RR's Signature Expiration time and the
-						      current time.
-					*/
-
-					if !qmsg.CheckingDisabled {
-						response.Msg.AuthenticatedData = response.Auth == dnssec.Secure
-
-						// If a response is Bogus, we return a Server Failure with all the response removed.
-						if response.Auth == dnssec.Bogus {
-							response.Msg.Rcode = dns.RcodeServerFailure
-							if SuppressBogusResponseSections {
-								response.Msg.Answer = []dns.RR{}
-								response.Msg.Ns = []dns.RR{}
-								response.Msg.Extra = []dns.RR{}
-							}
-						}
-					}
-
-				}
-
-				// We'll consider both of these 'normal' responses.
-				if !(response.Msg.Rcode == dns.RcodeSuccess || response.Msg.Rcode == dns.RcodeNameError) {
-					response.Err = fmt.Errorf("unsuccessful response code %s (%d)", RcodeToString(response.Msg.Rcode), response.Msg.Rcode)
-				}
-
-				//---
-
-				// Follow any CNAME, if needed.
-				if qmsg.Question[0].Qtype != dns.TypeCNAME && recordsOfTypeExist(response.Msg.Answer, dns.TypeCNAME) {
-					// The results from this are added to `response.Msg`.
-					err := cname(ctx, qmsg, response, resolver)
-					if err != nil {
-						return &Response{
-							Err: err,
-						}
-					}
-				}
-
-				//---
-
-				if RemoveAuthoritySectionForPositiveAnswers && len(response.Msg.Answer) > 0 && !recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
-					response.Msg.Ns = []dns.RR{}
-				}
-
-				dedup := make(map[string]dns.RR)
-				if len(response.Msg.Answer) > 0 {
-					response.Msg.Answer = dns.Dedup(response.Msg.Answer, dedup)
-				}
-				if len(response.Msg.Ns) > 0 {
-					clear(dedup)
-					response.Msg.Ns = dns.Dedup(response.Msg.Ns, dedup)
-				}
-				if len(response.Msg.Extra) > 0 {
-					clear(dedup)
-					response.Msg.Extra = dns.Dedup(response.Msg.Extra, dedup)
-				}
-
-				response.Duration = time.Since(start)
-				return response
-			}
-
-			// Otherwise - onwards to the next zone...
-			nameservers := extractRecords[*dns.NS](response.Msg.Ns)
-
-			if len(nameservers) == 0 {
-				return &Response{
-					Err: fmt.Errorf("no delegation nameservers found. we don't know where to go next"),
-				}
-			}
-
-			zoneName := canonicalName(nameservers[0].Header().Name)
-
-			// We expect the zone name to be a subdomain of the current zone (and also not the same as the current zone).
-			if zoneName == z.name || !dns.IsSubDomain(z.name, zoneName) {
-				return &Response{
-					Err: fmt.Errorf("unexpected next zone name [%s] after [%s]", zoneName, z.name),
-				}
-			}
-
-			z = resolver.zones.get(zoneName)
-
-			if z == nil {
-				var err error
-				z, err = createZone(ctx, zoneName, nameservers, response.Msg.Extra, resolver)
-				if err != nil {
-					return &Response{
-						Err: err,
-					}
-				}
-				resolver.zones.add(z)
-			}
-
-			if z == nil {
-				return &Response{
-					Err: fmt.Errorf("cannot find next zone in the chain"),
-				}
-			}
-
-		case <-ctx.Done():
-			return &Response{
-				Err: fmt.Errorf("cancelled"),
-			}
 		}
 
-	} // for
-
-	return &Response{
-		Err: fmt.Errorf("too many iterations"),
+		// We skip over these missing domains in our lookup loop.
+		d.next()
 	}
+
+	//---
+
+	if auth != nil {
+		auth.addResponse(z, response.Msg)
+	}
+
+	if response.Msg.Authoritative || recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) || !recordsOfTypeExist(response.Msg.Ns, dns.TypeNS) {
+		response = resolver.funcs.finaliseResponse(ctx, auth, qmsg, response)
+		return nil, response
+	}
+
+	//---
+
+	// Otherwise - onwards to the next zone...
+	nameservers := extractRecords[*dns.NS](response.Msg.Ns)
+
+	if len(nameservers) == 0 {
+		return nil, &Response{
+			Err: fmt.Errorf("no delegation nameservers found. we don't know where to go next"),
+		}
+	}
+
+	nextZoneName := canonicalName(nameservers[0].Header().Name)
+
+	newZone, err := resolver.funcs.createZone(ctx, nextZoneName, nameservers, response.Msg.Extra, resolver.funcs.getExchanger())
+	if err != nil {
+		return nil, ResponseError(err)
+	}
+	newZone.parent = z.name
+	resolver.zones.add(newZone)
+
+	return newZone, nil
+}
+
+func (resolver *Resolver) finaliseResponse(ctx context.Context, auth *authenticator, qmsg *dns.Msg, response *Response) *Response {
+	if auth != nil {
+		authTime := time.Now()
+		response.Auth, response.Deo, response.Err = auth.result()
+		Info(fmt.Sprintf("DNSSEC took %s to return an answer of %s and DOE %s", time.Since(authTime), response.Auth.String(), response.Deo.String()))
+	}
+
+	//---
+
+	// Follow any CNAME, if needed.
+	if qmsg.Question[0].Qtype != dns.TypeCNAME && recordsOfTypeExist(response.Msg.Answer, dns.TypeCNAME) {
+		// The results from this are added to `response.Msg`.
+		err := resolver.funcs.cname(ctx, qmsg, response, resolver.funcs.getExchanger())
+		if err != nil {
+			return &Response{
+				Err: err,
+			}
+		}
+	}
+
+	// We'll consider both of these 'normal' responses.
+	if !(response.Msg.Rcode == dns.RcodeSuccess || response.Msg.Rcode == dns.RcodeNameError) {
+		response.Err = fmt.Errorf("unsuccessful response code %s (%d)", RcodeToString(response.Msg.Rcode), response.Msg.Rcode)
+	}
+
+	//---
+
+	if RemoveAuthoritySectionForPositiveAnswers && len(response.Msg.Answer) > 0 && !recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
+		response.Msg.Ns = []dns.RR{}
+	}
+
+	if RemoveAdditionalSectionForPositiveAnswers && len(response.Msg.Answer) > 0 && !recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
+		var opt *dns.OPT
+		for _, extra := range response.Msg.Extra {
+			opt, _ = extra.(*dns.OPT)
+		}
+
+		if opt != nil {
+			response.Msg.Extra = []dns.RR{opt}
+		} else {
+			response.Msg.Extra = []dns.RR{}
+		}
+	}
+
+	dedup := make(map[string]dns.RR)
+	if len(response.Msg.Answer) > 0 {
+		response.Msg.Answer = dns.Dedup(response.Msg.Answer, dedup)
+	}
+	if len(response.Msg.Ns) > 0 {
+		clear(dedup)
+		response.Msg.Ns = dns.Dedup(response.Msg.Ns, dedup)
+	}
+	if len(response.Msg.Extra) > 0 {
+		clear(dedup)
+		response.Msg.Extra = dns.Dedup(response.Msg.Extra, dedup)
+	}
+
+	if auth != nil {
+		/*
+			TODO
+			   If the resolver accepts the RRset as authentic, the validator MUST
+			   set the TTL of the RRSIG RR and each RR in the authenticated RRset to
+			   a value no greater than the minimum of:
+			   o  the RRset's TTL as received in the response;
+			   o  the RRSIG RR's TTL as received in the response;
+			   o  the value in the RRSIG RR's Original TTL field; and
+			   o  the difference of the RRSIG RR's Signature Expiration time and the
+			      current time.
+		*/
+
+		if !qmsg.CheckingDisabled {
+			response.Msg.AuthenticatedData = response.Auth == dnssec.Secure
+
+			// If a response is Bogus, we return a Server Failure with all the response removed.
+			if response.Auth == dnssec.Bogus {
+				response.Msg.Rcode = dns.RcodeServerFailure
+				if SuppressBogusResponseSections {
+					response.Msg.Answer = []dns.RR{}
+					response.Msg.Ns = []dns.RR{}
+					response.Msg.Extra = []dns.RR{}
+				}
+			}
+		}
+	}
+
+	start, _ := ctx.Value(ctxStartTime).(time.Time)
+	response.Duration = time.Since(start)
+	return response
 }

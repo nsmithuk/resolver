@@ -1,12 +1,23 @@
 package resolver
 
 import (
+	"context"
 	"github.com/miekg/dns"
 	"strings"
 )
 
 type Resolver struct {
-	zones *zones
+	zones zoneStore
+	funcs resolverFunctions
+}
+
+// The core, top level, resolving functions. They're defined as variables to aid overriding them for testing.
+type resolverFunctions struct {
+	resolveLabel     func(ctx context.Context, d *domain, z *zone, qmsg *dns.Msg, auth *authenticator) (*zone, *Response)
+	createZone       func(ctx context.Context, name string, nameservers []*dns.NS, extra []dns.RR, exchanger exchanger) (*zone, error)
+	finaliseResponse func(ctx context.Context, auth *authenticator, qmsg *dns.Msg, response *Response) *Response
+	cname            func(ctx context.Context, qmsg *dns.Msg, r *Response, exchanger exchanger) error
+	getExchanger     func() exchanger
 }
 
 func NewResolver() *Resolver {
@@ -22,9 +33,29 @@ func NewResolver() *Resolver {
 		pool: pool,
 	})
 
-	return &Resolver{
+	resolver := &Resolver{
 		zones: z,
 	}
+
+	// When not testing, we point to the concrete instances of the functions.
+	resolver.funcs = resolverFunctions{
+		resolveLabel:     resolver.resolveLabel,
+		createZone:       createZone,
+		finaliseResponse: resolver.finaliseResponse,
+		cname:            cname,
+		getExchanger:     resolver.getExchanger,
+	}
+
+	return resolver
+}
+
+func (resolver *Resolver) getExchanger() exchanger {
+	return resolver
+}
+
+// CountZones metrics gathering.
+func (resolver *Resolver) CountZones() int {
+	return resolver.zones.count()
 }
 
 //-----------------------------------------------------------------------------
@@ -54,6 +85,8 @@ func buildRootServerPool() (*nameserverPool, error) {
 	if err := zp.Err(); err != nil {
 		return nil, err
 	}
+
+	pool.updateIPCount()
 
 	return pool, nil
 }

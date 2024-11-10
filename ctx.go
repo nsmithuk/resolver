@@ -1,9 +1,12 @@
 package resolver
 
-type CtxKey uint8
+type ctxKey uint8
 
 const (
-	ctxSessionQueries CtxKey = iota
+	CtxTrace ctxKey = iota
+
+	ctxSessionQueries
 	ctxIteration
 	ctxZoneName
+	ctxStartTime
 )

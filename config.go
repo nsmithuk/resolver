@@ -1,5 +1,10 @@
 package resolver
 
+import (
+	"github.com/nsmithuk/resolver/dnssec"
+	"time"
+)
+
 const (
 	DefaultMaxTTLAllowed = uint32(60 * 60 * 48) // 48 Hours
 
@@ -11,7 +16,11 @@ const (
 
 	DefaultSuppressBogusResponseSections = true
 
-	DefaultRemoveAuthoritySectionForPositiveAnswers = true
+	DefaultRemoveAuthoritySectionForPositiveAnswers  = true
+	DefaultRemoveAdditionalSectionForPositiveAnswers = true
+
+	DefaultTimeoutUDP = 150 * time.Millisecond
+	DefaultTimeoutTCP = 600 * time.Millisecond
 )
 
 var (
@@ -41,7 +50,8 @@ var (
 
 	// RemoveAuthoritySectionForPositiveAnswers indicates if the Authority section should be returned when it's deemed
 	// that it's record have no material impact on the result. e.g. it only contains nameserver records.
-	RemoveAuthoritySectionForPositiveAnswers = DefaultRemoveAuthoritySectionForPositiveAnswers
+	RemoveAuthoritySectionForPositiveAnswers  = DefaultRemoveAuthoritySectionForPositiveAnswers
+	RemoveAdditionalSectionForPositiveAnswers = DefaultRemoveAdditionalSectionForPositiveAnswers
 )
 
 //---
@@ -64,4 +74,13 @@ var Warn Logger = func(s string) {}
 
 func init() {
 	go IPv6Available()
+	dnssec.Info = func(s string) {
+		Info(s)
+	}
+	dnssec.Warn = func(s string) {
+		Warn(s)
+	}
+	dnssec.Debug = func(s string) {
+		Debug(s)
+	}
 }

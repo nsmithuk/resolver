@@ -13,7 +13,9 @@ import (
 
 type zone struct {
 	// An entry point to exchange with a specific zone.
-	name  string
+	name   string
+	parent string
+
 	pool  expiringExchanger
 	calls atomic.Uint64
 
@@ -30,10 +32,11 @@ func (z *zone) Exchange(ctx context.Context, m *dns.Msg) *Response {
 		if msg, err := Cache.Get(z.name, m.Question[0]); err != nil {
 			Warn(fmt.Errorf("error trying to perform a cache lookup for zone [%s]: %w", z.name, err).Error())
 		} else if msg != nil {
-			iteration, _ := ctx.Value(ctxIteration).(uint32)
+			trace, _ := ctx.Value(CtxTrace).(*Trace)
 			Query(fmt.Sprintf(
-				"%d: response for [%s] %s in zone [%s] found in cache",
-				iteration,
+				"%s-%d: response for [%s] %s in zone [%s] found in cache",
+				trace.SortID(),
+				trace.Iteration(),
 				m.Question[0].Name,
 				TypeToString(m.Question[0].Qtype),
 				z.name,
@@ -72,6 +75,30 @@ func (z *zone) clone(name string) *zone {
 		name: canonicalName(name),
 		pool: z.pool,
 	}
+}
+
+func (z *zone) soa(ctx context.Context, name string) (*dns.SOA, error) {
+	soaMsg := new(dns.Msg)
+	soaMsg.SetQuestion(dns.Fqdn(name), dns.TypeSOA)
+	soaMsg.RecursionDesired = false
+	response := z.Exchange(ctx, soaMsg)
+
+	if response.Empty() {
+		return nil, ErrEmptyResponse
+	}
+	if response.Error() {
+		return nil, response.Err
+	}
+	if !recordsOfTypeExist(response.Msg.Answer, dns.TypeSOA) {
+		return nil, nil
+	}
+
+	soas := extractRecords[*dns.SOA](response.Msg.Answer)
+	if len(soas) != 1 {
+		return nil, fmt.Errorf("we expect only a single SOA for a given name / zone. we got %d", len(soas))
+	}
+
+	return soas[0], nil
 }
 
 func (z *zone) dnsKeys(ctx context.Context) ([]dns.RR, error) {

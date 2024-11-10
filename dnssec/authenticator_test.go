@@ -4,56 +4,69 @@ import (
 	"context"
 	"errors"
 	"github.com/miekg/dns"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
-func TestAuthenticator_NotSubdomain(t *testing.T) {
+func TestAuthenticator_AddNotSubdomain(t *testing.T) {
 
 	q := dns.Question{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
-
 	a := NewAuth(context.Background(), q)
 
 	err := a.AddResponse(&mockZone{name: "test.example.net."}, &dns.Msg{})
-	if !errors.Is(err, ErrNotSubdomain) {
-		t.Errorf("expected ErrNotSubdomain as the TLD of the zone does not match the original qname, got %v", err)
-	}
+	assert.ErrorIs(t, err, ErrNotSubdomain, "as the TLD of the zone does not match the original qname")
 
 	//---
 
 	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "test.example.net.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if !errors.Is(err, ErrNotSubdomain) {
-		t.Errorf("expected ErrNotSubdomain as the TLD of the response question does not match the original qname, got %v", err)
-	}
+	assert.ErrorIs(t, err, ErrNotSubdomain, "as the TLD of the response question does not match the original qname")
 
-	//---
+}
 
-	q = dns.Question{Name: "a.b.c.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
-	a = NewAuth(context.Background(), q)
+func TestAuthenticator_AddDuplicateInputForZone(t *testing.T) {
+
+	q := dns.Question{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	a := NewAuth(context.Background(), q)
+
+	err := a.AddResponse(&mockZone{name: "com."}, &dns.Msg{Question: []dns.Question{q}})
+	assert.NoError(t, err)
+
+	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{Question: []dns.Question{q}})
+	assert.NoError(t, err)
+
+	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{Question: []dns.Question{q}})
+	assert.ErrorIs(t, err, ErrDuplicateInputForZone)
+
+}
+
+func TestAuthenticator_ProcessExpectedLastResult(t *testing.T) {
+
+	q := dns.Question{Name: "a.b.c.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	a := NewAuth(context.Background(), q)
 	a.results = append(a.results, &result{
 		zone: &mockZone{name: "b.c.example.com."},
 	})
 
-	err = a.AddResponse(&mockZone{name: "c.example.com."}, &dns.Msg{
+	err := a.processResponse(&mockZone{name: "c.example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "c.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
 
-	// We're expecting an error here as the last result seen was from zone `b.c.example.com.`, but we're not trying to add
-	// `c.example.com.`
-	if !errors.Is(err, ErrNotSubdomain) {
-		t.Errorf("expected ErrNotSubdomain as this response should come before the last result in the chain, got %v", err)
-	}
+	// We're expecting an error here as the last result seen was from zone `b.c.example.com.`,
+	// but we're now trying to add `c.example.com.`
+	assert.ErrorIs(t, err, ErrNotSubdomain, "as this response should come before the last result in the chain")
 
-	err = a.AddResponse(&mockZone{name: "b.c.example.com."}, &dns.Msg{
+	//---
+
+	err = a.processResponse(&mockZone{name: "b.c.example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "b.c.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if !errors.Is(err, ErrSameName) {
-		t.Errorf("expected ErrSameName as the zone names cannot be equal, got %v", err)
-	}
+	assert.ErrorIs(t, err, ErrSameName, "as the zone names cannot be equal")
+
 }
 
-func TestAuthenticator_StateSet(t *testing.T) {
+func TestAuthenticator_ProcessWithNoExpectedErrors(t *testing.T) {
 
 	q := dns.Question{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
 
@@ -64,21 +77,14 @@ func TestAuthenticator_StateSet(t *testing.T) {
 		return Secure, &result{}, nil
 	}
 
-	err := a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err := a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if err != nil {
-		t.Errorf("expected err to be nil, got %v", err)
-	}
-	if len(a.results) != 1 {
-		t.Errorf("expected len(a.results) to be 1, got %v", len(a.results))
-	}
-	if a.results[0].err != nil {
-		t.Errorf("expected err to be nil, got %v", a.results[0].err)
-	}
-	if a.results[0].state != Secure {
-		t.Errorf("expected state to be Secure, got %v", a.results[0].state)
-	}
+
+	assert.NoError(t, err)
+	assert.Len(t, a.results, 1)
+	assert.NoError(t, a.results[0].err)
+	assert.Equal(t, Secure, a.results[0].state)
 
 	//---
 
@@ -89,21 +95,13 @@ func TestAuthenticator_StateSet(t *testing.T) {
 		return Insecure, &result{}, nil
 	}
 
-	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err = a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if err != nil {
-		t.Errorf("expected err to be nil, got %v", err)
-	}
-	if len(a.results) != 1 {
-		t.Errorf("expected len(a.results) to be 1, got %v", len(a.results))
-	}
-	if a.results[0].err != nil {
-		t.Errorf("expected err to be nil, got %v", a.results[0].err)
-	}
-	if a.results[0].state != Insecure {
-		t.Errorf("expected state to be Insecure, got %v", a.results[0].state)
-	}
+	assert.NoError(t, err)
+	assert.Len(t, a.results, 1)
+	assert.NoError(t, a.results[0].err)
+	assert.Equal(t, Insecure, a.results[0].state)
 
 	//---
 
@@ -114,26 +112,17 @@ func TestAuthenticator_StateSet(t *testing.T) {
 		return Unknown, &result{}, nil
 	}
 
-	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err = a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if err != nil {
-		t.Errorf("expected err to be nil, got %v", err)
-	}
-	if len(a.results) != 1 {
-		t.Errorf("expected len(a.results) to be 1, got %v", len(a.results))
-	}
-	if a.results[0].err != nil {
-		t.Errorf("expected err to be nil, got %v", a.results[0].err)
-	}
-	if a.results[0].state != Bogus {
-		t.Errorf("expected state to be Bogus, got %v", a.results[0].state)
-	}
+	assert.NoError(t, err)
+	assert.Len(t, a.results, 1)
+	assert.NoError(t, a.results[0].err)
+	assert.Equal(t, Bogus, a.results[0].state)
 
 }
 
-func TestAuthenticator_ErrorSet(t *testing.T) {
-
+func TestAuthenticator_ProcessWithExpectedErrors(t *testing.T) {
 	q := dns.Question{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
 
 	// If an error is returned from verify, we expect it to be set on the result.
@@ -145,21 +134,13 @@ func TestAuthenticator_ErrorSet(t *testing.T) {
 		return Secure, &result{}, expected
 	}
 
-	err := a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err := a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if err != nil {
-		t.Errorf("expected err to be nil, got %v", err)
-	}
-	if len(a.results) != 1 {
-		t.Errorf("expected len(a.results) to be 1, got %v", len(a.results))
-	}
-	if !errors.Is(a.results[0].err, expected) {
-		t.Errorf("expected err to be %v, got %v", expected, a.results[0].err)
-	}
-	if a.results[0].state != Secure {
-		t.Errorf("expected state to be Secure, got %v", a.results[0].state)
-	}
+	assert.NoError(t, err)
+	assert.Len(t, a.results, 1)
+	assert.ErrorIs(t, a.results[0].err, expected)
+	assert.Equal(t, Secure, a.results[0].state)
 
 	//---
 
@@ -170,12 +151,10 @@ func TestAuthenticator_ErrorSet(t *testing.T) {
 		return Secure, nil, nil
 	}
 
-	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err = a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}}},
 	)
-	if !errors.Is(err, ErrUnknown) {
-		t.Errorf("expected err to be ErrUnknown, got %v", err)
-	}
+	assert.ErrorIs(t, err, ErrUnknown)
 
 }
 
@@ -205,17 +184,15 @@ func TestAuthenticator_MissingDSRecordError(t *testing.T) {
 	// Unexpected next RRSIG - missmatch on signerName
 	case1 := newRR("test.example.com. 955 IN RRSIG A 13 2 3600 20241102170341 20241012065317 19367 test.example.com. XMyTWC8y9WecF5ST67DyRUK3Ptvfpy/+Oetha9r6ZU0RJ4aclvY32uKCojUsjCUHaejma032va/7Z4Yd3Krq8Q==").(*dns.RRSIG)
 
-	err := a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err := a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{q},
 		Answer:   []dns.RR{case1},
 	})
 
 	var missing *MissingDSRecordError
-	if !errors.As(err, &missing) {
-		t.Errorf("expected err to be MissingDSRecordError, got %v", err)
-	}
-	if errors.As(err, &missing) && missing.RName() != "test.example.com." {
-		t.Errorf("expected rname to be  test.example.com., got %v", missing.RName())
+	assert.ErrorAs(t, err, &missing)
+	if missing != nil {
+		assert.Equal(t, "test.example.com.", missing.RName())
 	}
 
 	//---
@@ -223,22 +200,18 @@ func TestAuthenticator_MissingDSRecordError(t *testing.T) {
 	// Unexpected next RRSIG - signerName is not a subdomain of the question.
 	case2 := newRR("test.example.com. 955 IN RRSIG A 13 2 3600 20241102170341 20241012065317 19367 example.net. XMyTWC8y9WecF5ST67DyRUK3Ptvfpy/+Oetha9r6ZU0RJ4aclvY32uKCojUsjCUHaejma032va/7Z4Yd3Krq8Q==").(*dns.RRSIG)
 
-	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err = a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{q},
 		Answer:   []dns.RR{case2},
 	})
-	if !errors.Is(err, ErrNotSubdomain) {
-		t.Errorf("expected err to be ErrNotSubdomain, got %v", err)
-	}
+	assert.ErrorIs(t, err, ErrNotSubdomain)
 
 	// Expected next RRSIG
 	case3 := newRR("test.example.com. 955 IN RRSIG A 13 2 3600 20241102170341 20241012065317 19367 example.com. XMyTWC8y9WecF5ST67DyRUK3Ptvfpy/+Oetha9r6ZU0RJ4aclvY32uKCojUsjCUHaejma032va/7Z4Yd3Krq8Q==").(*dns.RRSIG)
 
-	err = a.AddResponse(&mockZone{name: "example.com."}, &dns.Msg{
+	err = a.processResponse(&mockZone{name: "example.com."}, &dns.Msg{
 		Question: []dns.Question{q},
 		Answer:   []dns.RR{case3},
 	})
-	if err != nil {
-		t.Errorf("expected err to be nil, got %v", err)
-	}
+	assert.NoError(t, err)
 }

@@ -3,6 +3,7 @@ package dnssec
 import (
 	"errors"
 	"github.com/miekg/dns"
+	"github.com/stretchr/testify/assert"
 	"slices"
 	"testing"
 )
@@ -198,4 +199,61 @@ func TestSignatures_ValidAndVerify(t *testing.T) {
 		t.Errorf("expected error to be ErrUnableToVerify")
 	}
 
+}
+
+func TestSignatures_CountUniqueTypes(t *testing.T) {
+	set := signatures{
+		{
+			rtype: dns.TypeA,
+		},
+		{
+			rtype: dns.TypeNSEC,
+		},
+		{
+			rtype: dns.TypeNSEC3,
+		},
+		{
+			rtype: dns.TypeDS,
+		},
+	}
+	assert.Equal(t, 4, set.countNameTypeCombinations())
+
+	set = signatures{
+		{
+			rtype: dns.TypeA,
+		},
+		{
+			rtype: dns.TypeA,
+		},
+		{
+			rtype: dns.TypeA,
+		},
+		{
+			rtype: dns.TypeDS,
+		},
+	}
+	assert.Equal(t, 2, set.countNameTypeCombinations())
+
+	set = signatures{}
+	assert.Equal(t, 0, set.countNameTypeCombinations())
+
+	set = signatures{
+		{
+			name:  "a.example.com.",
+			rtype: dns.TypeA,
+		},
+		{
+			name:  "a.example.com.",
+			rtype: dns.TypeA,
+		},
+		{
+			name:  "b.example.com.",
+			rtype: dns.TypeA,
+		},
+		{
+			name:  "a.example.com.",
+			rtype: dns.TypeDS,
+		},
+	}
+	assert.Equal(t, 3, set.countNameTypeCombinations())
 }

@@ -17,14 +17,24 @@ func NewAuth(ctx context.Context, question dns.Question) *Authenticator {
 		validateNegativeResponse:   validateNegativeResponse,
 	}
 
+	// We don't know at this point if the QName is the apex of a zone, or a label within a zone.
+	// Both example.com and test.example.com and made up of 3 zones, so we expect 3 inputs for both.
+	// So we +1 to the label count to allow for the former.
+	// Note that this is the max items, as it's possible that each label isn't a separate zone.
+	maxExpectedItems := dns.CountLabel(question.Name) + 1
+
 	return &Authenticator{
-		ctx:      ctx,
-		question: question,
-		results:  make([]*result, 0, 5),
-		verify:   v.verify,
+		ctx:         ctx,
+		question:    question,
+		inputBuffer: make([]*input, maxExpectedItems),
+		results:     make([]*result, 0, maxExpectedItems),
+		verify:      v.verify,
 	}
 }
 
+// AddResponse receives incoming responses that'll make up the authentication chain.
+// We expect one response per zone in the chain.
+// Responses can be passed in nay order and will be buffered, if needed, so they will be processed in the correct order.
 func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 
 	// The zone name must be an ancestor of the QName.
@@ -36,6 +46,46 @@ func (a *Authenticator) AddResponse(zone Zone, msg *dns.Msg) error {
 	if !dns.IsSubDomain(msg.Question[0].Name, a.question.Name) {
 		return fmt.Errorf("%w: current qname:[%s] target qname:[%s]", ErrNotSubdomain, zone.Name(), a.question.Name)
 	}
+
+	//---
+
+	// We expect one response per zone. We can therefore order the responses by the zone's label count.
+
+	name := zone.Name()
+	position := dns.CountLabel(name)
+
+	log := fmt.Sprintf("Adding response for zone [%s] in position %d with qname [%s] and type [%d]", name, position, msg.Question[0].Name, msg.Question[0].Qtype)
+	Info(log)
+
+	// Ensure we are not passed more than one response for any given zone.
+	if v := a.inputBuffer[position]; v != nil {
+		return fmt.Errorf("%w: we already have a dnssec authenticator input for zone [%s]", ErrDuplicateInputForZone, name)
+	}
+
+	a.inputBuffer[position] = &input{zone: zone, msg: msg}
+
+	// We try and process as many inputs as we can. Inputs must be processed in order: root -> leaf.
+	// This essentially ensure that results are process in index order of the inputBuffer.
+	// This works when there are no gaps in the input buffer, thus we're just making a best effort here.
+	// A final check to ensure all inputs are actually processed with done when Result() is called.
+	for ; a.inputBufferIdx < len(a.inputBuffer); a.inputBufferIdx++ {
+		if a.inputBuffer[a.inputBufferIdx] == nil {
+			break
+		}
+
+		in := a.inputBuffer[a.inputBufferIdx]
+
+		err := a.processResponse(in.zone, in.msg)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+
+}
+
+func (a *Authenticator) processResponse(zone Zone, msg *dns.Msg) error {
 
 	var last *result
 	if len(a.results) == 0 {

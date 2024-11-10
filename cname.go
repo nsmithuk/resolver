@@ -38,7 +38,14 @@ func cname(ctx context.Context, qmsg *dns.Msg, r *Response, exchanger exchanger)
 		r.Msg.Ns = append(r.Msg.Ns, rmsgCNAME.Msg.Ns...)
 		r.Msg.Extra = append(r.Msg.Extra, rmsgCNAME.Msg.Extra...)
 
+		// Ensure we handel differing DNSSEC results correctly.
 		r.Auth = r.Auth.Combine(rmsgCNAME.Auth)
+
+		// The overall message is only authoritative if all answers are.
+		r.Msg.Authoritative = r.Msg.Authoritative && rmsgCNAME.Msg.Authoritative
+
+		//Crude, but ensures we don't return 0 if any message was not 0. TODO: should this be more sophisticated?
+		r.Msg.Rcode = max(r.Msg.Rcode, rmsgCNAME.Msg.Rcode)
 	}
 
 	return nil

@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"github.com/stretchr/testify/mock"
 	"testing"
 	"time"
@@ -121,4 +122,68 @@ func TestZone_DNSKeys_Expired(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, expectedResponse.Msg.Answer, keys)
 	mockPool.AssertCalled(t, "exchange", mock.Anything, mock.AnythingOfType("*dns.Msg"))
+}
+
+func TestZone_DNSKeys_NilResponse(t *testing.T) {
+	// Setup
+	z := &zone{name: "example.com."}
+	mockPool := new(MockExpiringExchanger)
+	z.pool = mockPool
+
+	//Empty
+	expectedResponse := &Response{}
+
+	// Mock the exchange function
+	mockPool.On("exchange", mock.Anything, mock.AnythingOfType("*dns.Msg")).Return(expectedResponse)
+
+	keys, err := z.dnsKeys(context.TODO())
+	assert.Nil(t, keys)
+	assert.ErrorIs(t, err, ErrFailedToGetDNSKEYs)
+}
+
+func TestZone_DNSKeys_ErrorResponse(t *testing.T) {
+	// Setup
+	z := &zone{name: "example.com."}
+	mockPool := new(MockExpiringExchanger)
+	z.pool = mockPool
+
+	ErrTest := errors.New("test error")
+
+	expectedResponse := &Response{
+		Msg: &dns.Msg{
+			Answer: []dns.RR{&dns.DNSKEY{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: 300}}},
+		},
+		Err: ErrTest,
+	}
+
+	// Mock the exchange function
+	mockPool.On("exchange", mock.Anything, mock.AnythingOfType("*dns.Msg")).Return(expectedResponse)
+
+	keys, err := z.dnsKeys(context.TODO())
+	assert.Nil(t, keys)
+	assert.ErrorIs(t, err, ErrFailedToGetDNSKEYs)
+	assert.ErrorIs(t, err, ErrTest)
+}
+
+func TestZone_DNSKeys_EmptyAnswer(t *testing.T) {
+	// Setup
+	z := &zone{name: "example.com."}
+	mockPool := new(MockExpiringExchanger)
+	z.pool = mockPool
+
+	expectedResponse := &Response{
+		Msg: &dns.Msg{
+			Answer: []dns.RR{},
+		},
+	}
+
+	// Mock the exchange function
+	mockPool.On("exchange", mock.Anything, mock.AnythingOfType("*dns.Msg")).Return(expectedResponse)
+
+	keys, err := z.dnsKeys(context.TODO())
+	assert.Nil(t, keys)
+	assert.NoError(t, err)
+
+	// We expect expiry to be in the future.
+	assert.Greater(t, z.dnskeyExpiry, time.Now())
 }

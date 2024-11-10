@@ -14,6 +14,7 @@ var (
 	ErrSignatureSetEmpty              = errors.New("cannot verify an empty signature set")
 	ErrUnableToVerify                 = errors.New("unable to verify signature")
 	ErrVerifyFailed                   = errors.New("signature verification failed")
+	ErrNoKeyFoundForSignature         = errors.New("no key found for signature")
 	ErrInvalidTime                    = errors.New("current time is outside of the msg validity period")
 	ErrInvalidSignature               = errors.New("msg signature is invalid")
 	ErrInvalidLabelCount              = errors.New("number of labels in the rrset owner name is less the value in the rrsig rr's labels field")
@@ -26,14 +27,13 @@ var (
 	ErrNotSubdomain                   = errors.New("domain is not a subdomain of another")
 	ErrSameName                       = errors.New("domain names are the same")
 	ErrUnknown                        = errors.New("unknown error: unable to process response")
-
-	ErrSignerNameNotParentOfQName = errors.New("the signer name is not a parent of the qname")
-
-	ErrNoResults = errors.New("no results have been processed")
-
-	ErrBogusResultFound         = errors.New("we've deemed the result bogus")
-	ErrBogusDoeRecordsNotFound  = errors.New("denial of existence records missing")
-	ErrBogusWildcardDoeNotFound = errors.New("missing doe for qname when answer synthesised from a wildcard")
+	ErrSignerNameNotParentOfQName     = errors.New("the signer name is not a parent of the qname")
+	ErrNoResults                      = errors.New("no results have been processed")
+	ErrBogusResultFound               = errors.New("we've deemed the result bogus")
+	ErrBogusDoeRecordsNotFound        = errors.New("denial of existence records missing")
+	ErrBogusWildcardDoeNotFound       = errors.New("missing doe for qname when answer synthesised from a wildcard")
+	ErrNotAllInputsProcessed          = errors.New("not all inputs have been processed")
+	ErrDuplicateInputForZone          = errors.New("duplicate input for zone")
 )
 
 type MissingDSRecordError struct {
