@@ -29,15 +29,15 @@ func TestCreateZone_SuccessWithoutEnrichment(t *testing.T) {
 	ctx := context.TODO()
 
 	// Execute
-	z, err := createZone(ctx, "example.com.", nameservers, extra, mockExchanger)
+	z, err := createZone(ctx, "example.com.", "com.", nameservers, extra, mockExchanger)
 
 	// Assertions
 	assert.NoError(t, err)
 	assert.NotNil(t, z)
-	assert.Equal(t, "example.com.", z.name)
+	assert.Equal(t, "example.com.", z.name())
 
 	// We'll peek under the covers to ensure the pool was created as expected.
-	pool, ok := z.pool.(*nameserverPool)
+	pool, ok := z.(*zoneImpl).pool.(*nameserverPool)
 	assert.True(t, ok)
 	assert.Equal(t, pool.status(), PoolPrimed)
 }
@@ -52,7 +52,7 @@ func TestCreateZone_PoolCreationFailsWithoutEnrichment(t *testing.T) {
 	ctx := context.TODO()
 
 	// Execute
-	z, err := createZone(ctx, "example.com.", nameservers, extra, mockExchanger)
+	z, err := createZone(ctx, "example.com.", "com.", nameservers, extra, mockExchanger)
 
 	// Assertions
 	assert.Nil(t, z)
@@ -85,15 +85,15 @@ func TestCreateZone_SuccessWithEnrichment(t *testing.T) {
 	})
 
 	// Execute
-	z, err := createZone(ctx, "example.com.", nameservers, extra, mockExchanger)
+	z, err := createZone(ctx, "example.com.", "com.", nameservers, extra, mockExchanger)
 
 	// AssertionsOk
 	assert.NoError(t, err)
 	assert.NotNil(t, z)
-	assert.Equal(t, "example.com.", z.name)
+	assert.Equal(t, "example.com.", z.name())
 
 	// We'll peek under the covers to ensure the pool was created as expected.
-	pool, ok := z.pool.(*nameserverPool)
+	pool, ok := z.(*zoneImpl).pool.(*nameserverPool)
 	assert.True(t, ok)
 	assert.Equal(t, pool.status(), PoolPrimed)
 }
@@ -120,7 +120,7 @@ func TestCreateZone_PoolCreationFailsWithEnrichment(t *testing.T) {
 	})
 
 	// Execute
-	z, err := createZone(ctx, "example.com.", nameservers, extra, mockExchanger)
+	z, err := createZone(ctx, "example.com.", "com.", nameservers, extra, mockExchanger)
 
 	// Assertions
 	assert.Nil(t, z)
@@ -155,15 +155,15 @@ func TestCreateZone_SuccessWithOptionalEnrichment(t *testing.T) {
 	})
 
 	// Execute
-	z, err := createZone(ctx, "example.com.", nameservers, extra, mockExchanger)
+	z, err := createZone(ctx, "example.com.", "com.", nameservers, extra, mockExchanger)
 
 	// AssertionsOk
 	assert.NoError(t, err)
 	assert.NotNil(t, z)
-	assert.Equal(t, "example.com.", z.name)
+	assert.Equal(t, "example.com.", z.name())
 
 	// We'll peek under the covers to ensure the pool was created as expected.
-	pool, ok := z.pool.(*nameserverPool)
+	pool, ok := z.(*zoneImpl).pool.(*nameserverPool)
 	assert.True(t, ok)
 
 	for i := 1; i <= 10; i++ {

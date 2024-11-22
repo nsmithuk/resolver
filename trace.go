@@ -30,7 +30,7 @@ func (t *Trace) ID() string {
 	return t.Id.String()
 }
 
-func (t *Trace) SortID() string {
+func (t *Trace) ShortID() string {
 	// Return only the last 7 characters. In the vast majority of cases this is unique enough.
 	return t.ID()[29:]
 }

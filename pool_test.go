@@ -114,7 +114,7 @@ func TestFindAddressesForHostname_EmptyInput(t *testing.T) {
 
 	assert.Len(t, a, 0)
 	assert.Len(t, aaaa, 0)
-	assert.Equal(t, MaxTTLAllowed, ttl)
+	assert.Equal(t, MaxAllowedTTL, ttl)
 }
 
 func TestFindAddressesForHostname_MixedRecords(t *testing.T) {

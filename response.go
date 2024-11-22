@@ -15,16 +15,16 @@ type Response struct {
 	Auth     dnssec.AuthenticationResult
 }
 
-func (r *Response) Error() bool {
+func (r *Response) HasError() bool {
 	return r != nil && r.Err != nil
 }
 
-func (r *Response) Empty() bool {
+func (r *Response) IsEmpty() bool {
 	return r == nil || r.Msg == nil
 }
 
 func (r *Response) truncated() bool {
-	if r.Empty() {
+	if r.IsEmpty() {
 		return false
 	}
 	return r.Msg.Truncated

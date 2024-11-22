@@ -6,88 +6,83 @@ import (
 	"slices"
 )
 
+// domain represents a domain name with utilities for traversing its labels.
 type domain struct {
-	name               string
-	labelIndexes       []int
-	currentIdxPosition int
+	name         string // full canonical domain name
+	labelIndexes []int  // indices marking each label start in the domain
+	currentIdx   int    // current traversal position in labelIndexes
 }
 
+// newDomain creates a new domain with a canonical name and prepares label indexes for traversal.
 func newDomain(d string) domain {
 	d = dns.CanonicalName(d)
 	labelIndexes := append(dns.Split(d), len(d)-1)
+
+	// We iterate over the labels backwards, shortest FQDN to longest.
 	slices.Reverse(labelIndexes)
-	return domain{
-		name:         d,
-		labelIndexes: labelIndexes,
-	}
+
+	return domain{name: d, labelIndexes: labelIndexes}
 }
 
-func (d *domain) windTo(s string) error {
-	s = dns.CanonicalName(s)
-	for ; !d.end(); d.next() {
-		if d.current() == s {
+// windTo moves to the specified label within the domain, returning an error if not found.
+func (d *domain) windTo(target string) error {
+	target = dns.CanonicalName(target)
+
+	if !dns.IsSubDomain(target, d.name) {
+		return fmt.Errorf("%s is not a subdomain of %s", target, d.name)
+	}
+
+	for d.more() {
+		if d.current() == target {
 			return nil
 		}
+		d.next()
 	}
-	return fmt.Errorf("%s not found", s)
+
+	return fmt.Errorf("%s not found", target)
 }
 
-// Returns the domain segment starting from the current label position.
-// This segment represents the current FQDN as seen from the current position in the label hierarchy.
+// current returns the domain segment from the current label position onward.
 func (d *domain) current() string {
-	idx := d.currentIdxPosition
-	if d.currentIdxPosition >= len(d.labelIndexes) {
-		idx = len(d.labelIndexes) - 1
+
+	// If the index pointer has moved past the end of the slice, we always return the full name.
+	if d.currentIdx >= len(d.labelIndexes) {
+		return d.name
 	}
-	return d.name[d.labelIndexes[idx]:]
+
+	return d.name[d.labelIndexes[d.currentIdx]:]
 }
 
-// Retrieves the next domain segment in the hierarchy without moving the position.
-// Returns a boolean indicating if a next label exists to ensure safe retrieval.
-//func (d *domain) next() (string, bool) {
-//	if !d.more() {
-//		return "", false
-//	}
-//	return d.name[d.labelIndexes[d.currentIdxPosition+1]:], true
-//}
-
-func (d *domain) next() bool {
-	d.currentIdxPosition++
-	return true
+// next advances to the next label position in the domain hierarchy.
+func (d *domain) next() {
+	d.currentIdx++
 }
 
-// Checks if there are additional labels remaining in the domain hierarchy to traverse.
+// more checks if there are remaining labels to traverse.
 func (d *domain) more() bool {
-	return d.currentIdxPosition+1 < len(d.labelIndexes)
+	// By setting this to <=, the last domain is returned twice.
+	// This is needed when the QName is the apex of a zone.
+	// The first call resolves the zone's name servers; the second the actual response.
+	return d.currentIdx <= len(d.labelIndexes)
 }
 
-func (d *domain) end() bool {
-	return d.currentIdxPosition > len(d.labelIndexes)
+func (d *domain) last() bool {
+	return d.currentIdx >= len(d.labelIndexes)-1
 }
 
-// Advances the current label position to the next label in the domain hierarchy.
-// Does nothing if no more labels are available, allowing safe iteration.
-//func (d *domain) advance() {
-//	if d.more() {
-//		d.currentIdxPosition++
-//	}
-//}
-//
-//func (d *domain) isLast() bool {
-//	return !d.more()
-//}
+// gap returns intermediate domain segments between the current position and a target with more labels.
+func (d *domain) gap(target string) []string {
+	if !dns.IsSubDomain(target, d.name) {
+		return nil
+	}
 
-// Computes and returns any intermediate domain segments between the current position
-// and a target domain with more labels. Each segment is an FQDN derived from the original domain,
-// enabling traversal up the hierarchy to the target.
-func (d *domain) gap(s string) []string {
-	missing := dns.CountLabel(s) - dns.CountLabel(d.current())
-	if missing < 1 {
-		return []string{}
+	missing := dns.CountLabel(target) - dns.CountLabel(d.current())
+	if missing <= 0 {
+		return nil
 	}
 
 	results := make([]string, 0, missing)
-	for i := d.currentIdxPosition; i < missing+d.currentIdxPosition; i++ {
+	for i := d.currentIdx; i < missing+d.currentIdx; i++ {
 		results = append(results, d.name[d.labelIndexes[i]:])
 	}
 	return results

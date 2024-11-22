@@ -31,7 +31,7 @@ func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) *Response 
 		}
 	}
 
-	if response.Empty() || response.Error() || response.truncated() {
+	if response.IsEmpty() || response.HasError() || response.truncated() {
 		// If there was an issue, we give it one more try.
 		// If we have more than one nameserver, this will try a different one.
 		if hasIPv4 {
@@ -45,7 +45,7 @@ func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) *Response 
 		}
 	}
 
-	if response.Empty() || response.Error() {
+	if response.IsEmpty() || response.HasError() {
 		errMsg := fmt.Sprintf("all nameservers tried returned an unsucessful response for qname [%s]", m.Question[0].Name)
 		if z, ok := ctx.Value(ctxZoneName).(string); ok {
 			errMsg = errMsg + fmt.Sprintf(" in zone [%s]", z)
@@ -53,7 +53,7 @@ func (pool *nameserverPool) exchange(ctx context.Context, m *dns.Msg) *Response 
 
 		err := fmt.Errorf("%w: %s", ErrUnableToResolveAnswer, errMsg)
 
-		if response.Error() {
+		if response.HasError() {
 			// If we already had an error, we'll wrap it with this one.
 			response.Err = fmt.Errorf("%w: %w", response.Err, err)
 		} else {

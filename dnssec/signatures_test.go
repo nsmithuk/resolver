@@ -72,7 +72,9 @@ func TestSignatures_FilterOnTypeAndExtractDSRecords(t *testing.T) {
 
 }
 
-func TestSignatures_ValidAndVerify(t *testing.T) {
+func TestSignatures_ValidAndVerify_RequireAllSignaturesValid(t *testing.T) {
+
+	RequireAllSignaturesValid = true
 
 	// An empty set is not a valid set.
 
@@ -93,7 +95,7 @@ func TestSignatures_ValidAndVerify(t *testing.T) {
 
 	// When all signatures are valid, the whole set is valid.
 
-	set = slices.Concat(set, signatures{
+	set = signatures{
 		{
 			rtype:    dns.TypeA,
 			verified: true,
@@ -102,7 +104,7 @@ func TestSignatures_ValidAndVerify(t *testing.T) {
 			rtype:    dns.TypeMX,
 			verified: true,
 		},
-	})
+	}
 
 	if !set.Valid() {
 		t.Error("expected valid signature")
@@ -198,6 +200,274 @@ func TestSignatures_ValidAndVerify(t *testing.T) {
 	if !errors.Is(err, ErrUnableToVerify) {
 		t.Errorf("expected error to be ErrUnableToVerify")
 	}
+
+	RequireAllSignaturesValid = DefaultRequireAllSignaturesValid
+}
+
+func TestSignatures_ValidAndVerify_verifyOneOrMoreRRSigPerRRSet_ZeroAndOneSignature(t *testing.T) {
+
+	ErrTest1 := errors.New("test error 1")
+
+	// An empty set is not a valid set.
+
+	set := signatures{}
+
+	if set.Valid() {
+		t.Error("expected invalid signature")
+	}
+	err := set.Verify()
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrSignatureSetEmpty)
+
+	//---
+
+	// When there is one RRSET, and it's valid, we're valid overall.
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: true,
+		},
+	}
+
+	assert.True(t, set.Valid())
+
+	err = set.Verify()
+	assert.NoError(t, err)
+
+	//---
+
+	// When there is one RRSET, and it's not valid, we're not valid overall.
+	// When no error is set in the signature, we expect to see the default error: ErrUnableToVerify
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: false,
+		},
+	}
+
+	assert.False(t, set.Valid())
+
+	err = set.Verify()
+	assert.ErrorIs(t, err, ErrVerifyFailed)
+	assert.ErrorIs(t, err, ErrUnableToVerify)
+
+	//---
+
+	// When there is one RRSET, and it's not valid, we're not valid overall.
+	// When an error is set, we expect that error back.
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: false,
+			err:      ErrTest1,
+		},
+	}
+
+	assert.False(t, set.Valid())
+
+	err = set.Verify()
+	assert.ErrorIs(t, err, ErrVerifyFailed)
+	assert.ErrorIs(t, err, ErrTest1)
+
+}
+
+func TestSignatures_ValidAndVerify_verifyOneOrMoreRRSigPerRRSet_MoreThanOneSignature(t *testing.T) {
+
+	ErrTest1 := errors.New("test error 1")
+	ErrTest2 := errors.New("test error 2")
+
+	// When there's one valid signature per type, overall we're valid.
+
+	set := signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeAAAA,
+			verified: true,
+		},
+	}
+
+	assert.True(t, set.Valid())
+	err := set.Verify()
+	assert.NoError(t, err)
+
+	//---
+
+	// When there's one type that does not have a valid signature, then overall we're invalid.
+	// If there was no custom error set on the invalid signature, we see the default.
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: false,
+		},
+		{
+			rtype:    dns.TypeAAAA,
+			verified: true,
+		},
+	}
+
+	assert.False(t, set.Valid())
+	err = set.Verify()
+	assert.ErrorIs(t, err, ErrVerifyFailed)
+	assert.ErrorIs(t, err, ErrUnableToVerify)
+
+	//---
+
+	// When there's one type that does not have a valid signature, then overall we're invalid.
+	// If there was a custom error on the invalid signature, we see this error.
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: false,
+			err:      ErrTest1,
+		},
+		{
+			rtype:    dns.TypeAAAA,
+			verified: true,
+		},
+	}
+
+	assert.False(t, set.Valid())
+	err = set.Verify()
+	assert.ErrorIs(t, err, ErrVerifyFailed)
+	assert.ErrorIs(t, err, ErrTest1)
+
+	//---
+
+	// When all types have at least one valid signature, the overall response is valid.
+	// Variation 1
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: false,
+			err:      ErrTest1,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: false,
+			err:      ErrTest2,
+		},
+		{
+			rtype:    dns.TypeAAAA,
+			verified: true,
+		},
+	}
+
+	assert.True(t, set.Valid())
+	err = set.Verify()
+	assert.NoError(t, err)
+
+	//---
+
+	// When all types have at least one valid signature, the overall response is valid.
+	// Variation 2
+
+	set = signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: false,
+			err:      ErrTest1,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeAAAA,
+			verified: true,
+		},
+	}
+
+	assert.True(t, set.Valid())
+	err = set.Verify()
+	assert.NoError(t, err)
+
+}
+
+func TestSignatures_ValidAndVerify_verifyOneOrMoreRRSigPerRRSet_ErrorWrapping(t *testing.T) {
+	ErrTest1 := errors.New("test error 1")
+	ErrTest2 := errors.New("test error 2")
+	ErrTest3 := errors.New("test error 3")
+
+	// We expect to see all 2 custom tests errors, plus the default error returned.
+
+	set := signatures{
+		{
+			rtype:    dns.TypeA,
+			verified: false,
+			err:      ErrTest1,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: false,
+			err:      ErrTest2,
+		},
+		{
+			rtype:    dns.TypeMX,
+			verified: true,
+		},
+		{
+			rtype:    dns.TypeAAAA,
+			verified: false,
+			err:      ErrTest3,
+		},
+		{
+			rtype:    dns.TypeTXT,
+			verified: false,
+		},
+	}
+
+	assert.False(t, set.Valid())
+	err := set.Verify()
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrVerifyFailed)
+	assert.ErrorIs(t, err, ErrTest1)
+
+	// We don't expect to see this as are is at least one valid signature of MX.
+	assert.NotErrorIs(t, err, ErrTest2)
+
+	assert.ErrorIs(t, err, ErrTest3)
+	assert.ErrorIs(t, err, ErrUnableToVerify)
 
 }
 

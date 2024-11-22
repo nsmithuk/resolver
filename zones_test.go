@@ -8,14 +8,14 @@ import (
 
 func TestZones_Get_ExistingZoneWithValidPool(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
 	mockPool.On("expired").Return(false)
 
 	zs := &zones{
-		zones: map[string]*zone{"example.com.": z},
+		zones: map[string]zone{"example.com.": z},
 	}
 
 	// Execute
@@ -29,7 +29,7 @@ func TestZones_Get_ExistingZoneWithValidPool(t *testing.T) {
 func TestZones_Get_NonExistingZone(t *testing.T) {
 	// Setup: Empty zones map
 	zs := &zones{
-		zones: make(map[string]*zone),
+		zones: make(map[string]zone),
 	}
 
 	// Execute
@@ -41,7 +41,7 @@ func TestZones_Get_NonExistingZone(t *testing.T) {
 
 func TestZones_Get_ExistingZoneWithExpiredPool(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
@@ -49,7 +49,7 @@ func TestZones_Get_ExistingZoneWithExpiredPool(t *testing.T) {
 	mockPool.On("expired").Return(true)
 
 	zs := &zones{
-		zones: map[string]*zone{"example.com.": z},
+		zones: map[string]zone{"example.com.": z},
 	}
 
 	// Execute
@@ -62,9 +62,9 @@ func TestZones_Get_ExistingZoneWithExpiredPool(t *testing.T) {
 func TestZones_Add_NewZone(t *testing.T) {
 	// Setup: Empty zones map
 	zs := &zones{
-		zones: make(map[string]*zone),
+		zones: make(map[string]zone),
 	}
-	newZone := &zone{name: "newzone.com."}
+	newZone := &zoneImpl{zoneName: "newzone.com."}
 
 	// Execute
 	zs.add(newZone)
@@ -77,7 +77,7 @@ func TestZones_Add_NewZone(t *testing.T) {
 func TestZones_Add_ZoneToUninitializedMap(t *testing.T) {
 	// Setup: Uninitialized zones map
 	zs := &zones{}
-	newZone := &zone{name: "uninitialized.com."}
+	newZone := &zoneImpl{zoneName: "uninitialized.com."}
 
 	// Execute
 	zs.add(newZone)
@@ -85,4 +85,55 @@ func TestZones_Add_ZoneToUninitializedMap(t *testing.T) {
 	// Assertions: The new zone should be added and the map should be initialized
 	assert.NotNil(t, zs.zones["uninitialized.com."])
 	assert.Equal(t, newZone, zs.zones["uninitialized.com."])
+}
+
+func TestZones_GetZoneList_RootOnly(t *testing.T) {
+	root := getMockZone(".", "")
+
+	// On the first query the zone store will only contain the root.
+	zs := &zones{}
+	zs.add(root)
+
+	list := zs.getZoneList("www.example.com.")
+
+	assert.Len(t, list, 1)
+	assert.Equal(t, root, list[0])
+}
+
+func TestZones_GetZoneList_FullChain(t *testing.T) {
+	root := getMockZone(".", "")
+	com := getMockZone("com.", ".")
+	example := getMockZone("example.com.", "com.")
+
+	// On the first query the zone store will only contain the root.
+	zs := &zones{}
+	zs.add(root)
+	zs.add(com)
+	zs.add(example)
+
+	list := zs.getZoneList("www.example.com.")
+
+	assert.Len(t, list, 3)
+	assert.Equal(t, example, list[0])
+	assert.Equal(t, com, list[1])
+	assert.Equal(t, root, list[2])
+}
+
+func TestZones_GetZoneList_BrokenChain(t *testing.T) {
+
+	// We're missing the .com, so we expect only root back.
+	// (as a full chain cannot be made from example.com. back to the root).
+
+	root := getMockZone(".", "")
+	example := getMockZone("example.com.", "com.")
+
+	// On the first query the zone store will only contain the root.
+	zs := &zones{}
+	zs.add(root)
+	zs.add(example)
+
+	list := zs.getZoneList("www.example.com.")
+
+	assert.Len(t, list, 1)
+	assert.Equal(t, root, list[0])
 }

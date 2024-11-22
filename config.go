@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	DefaultMaxTTLAllowed = uint32(60 * 60 * 48) // 48 Hours
+	DefaultMaxAllowedTTL = uint32(60 * 60 * 48) // 48 Hours
 
 	DefaultMaxQueriesPerRequest = uint32(100)
 
@@ -24,9 +24,9 @@ const (
 )
 
 var (
-	// MaxTTLAllowed define the maximum TTL that we'll cache any record for. This overrides any TTLs set by records
+	// MaxAllowedTTL define the maximum TTL that we'll cache any record for. This overrides any TTLs set by records
 	// we receive. Shorter TTLs on received records will still be respected.
-	MaxTTLAllowed = DefaultMaxTTLAllowed
+	MaxAllowedTTL = DefaultMaxAllowedTTL
 
 	// MaxQueriesPerRequest gives the maximum number of DNS lookups that can occur some a single request to resolver.Exchange().
 	// This will include all requests for all the requests from the root, to the leaf; plus any enrichment needed.

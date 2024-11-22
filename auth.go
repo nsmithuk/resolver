@@ -23,7 +23,7 @@ type authenticator struct {
 }
 
 type authenticatorInput struct {
-	z   *zone
+	z   zone
 	msg *dns.Msg
 }
 
@@ -49,7 +49,7 @@ func (a *authenticator) close() {
 	})
 }
 
-func (a *authenticator) addDelegationSignerLink(z *zone, qname string) {
+func (a *authenticator) addDelegationSignerLink(z zone, qname string) {
 	if a.finished.Load() {
 		return
 	}
@@ -57,21 +57,21 @@ func (a *authenticator) addDelegationSignerLink(z *zone, qname string) {
 	go func() {
 		defer a.processing.Done()
 
-		go z.dnsKeys(a.ctx)
+		go z.dnskeys(a.ctx)
 
 		dsMsg := new(dns.Msg)
 		dsMsg.SetQuestion(dns.Fqdn(qname), dns.TypeDS)
 		dsMsg.SetEdns0(4096, true)
 		dsMsg.RecursionDesired = false
-		response := z.Exchange(a.ctx, dsMsg)
-		if !response.Empty() && !response.Error() {
+		response := z.exchange(a.ctx, dsMsg)
+		if !response.IsEmpty() && !response.HasError() {
 			a.processing.Add(1)
 			a.queue <- authenticatorInput{z, response.Msg}
 		}
 	}()
 }
 
-func (a *authenticator) addResponse(z *zone, msg *dns.Msg) error {
+func (a *authenticator) addResponse(z zone, msg *dns.Msg) error {
 	if a.finished.Load() {
 		return nil
 	}
@@ -116,15 +116,15 @@ func (a *authenticator) result() (dnssec.AuthenticationResult, dnssec.DenialOfEx
 // an authoritative answer themselves, we can assume that's an error.
 type authZoneWrapper struct {
 	ctx  context.Context
-	zone *zone
+	zone zone
 }
 
 // Name returns the zone's apex domain name.
 func (wrapper *authZoneWrapper) Name() string {
-	return wrapper.zone.name
+	return wrapper.zone.name()
 }
 
 // GetDNSKEYRecords Looks up the DNSKEY records for the given QName, in the zone.
 func (wrapper *authZoneWrapper) GetDNSKEYRecords() ([]dns.RR, error) {
-	return wrapper.zone.dnsKeys(wrapper.ctx)
+	return wrapper.zone.dnskeys(wrapper.ctx)
 }

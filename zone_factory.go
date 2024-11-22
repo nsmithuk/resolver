@@ -7,7 +7,15 @@ import (
 	"time"
 )
 
-func createZone(ctx context.Context, name string, nameservers []*dns.NS, extra []dns.RR, exchanger exchanger) (*zone, error) {
+func createZone(ctx context.Context, name, parent string, nameservers []*dns.NS, extra []dns.RR, exchanger exchanger) (zone, error) {
+	name = dns.CanonicalName(name)
+	parent = dns.CanonicalName(parent)
+
+	if name == parent || !dns.IsSubDomain(parent, name) {
+		return nil, fmt.Errorf("%w: the new zone name [%s] must be a subdomain of the parent [%s]", ErrFailedCreatingZoneAndPool, name, parent)
+	}
+
+	//---
 
 	pool := newNameserverPool(nameservers, extra)
 
@@ -30,9 +38,10 @@ func createZone(ctx context.Context, name string, nameservers []*dns.NS, extra [
 		return nil, fmt.Errorf("%w for [%s]: the nameserver pool is empty and we have no hostnames to enrich", ErrFailedCreatingZoneAndPool, name)
 	}
 
-	z := &zone{
-		name: name,
-		pool: pool,
+	z := &zoneImpl{
+		zoneName:   name,
+		parentName: parent,
+		pool:       pool,
 	}
 
 	Debug(fmt.Sprintf("new zone created [%s]", name))
@@ -71,7 +80,7 @@ func enrichPool(ctx context.Context, zoneName string, pool *nameserverPool, exch
 				qmsg.SetQuestion(dns.Fqdn(domain), t)
 
 				response := exchanger.exchange(ctx, qmsg)
-				if !response.Error() && !response.Empty() && len(response.Msg.Answer) > 0 {
+				if !response.HasError() && !response.IsEmpty() && len(response.Msg.Answer) > 0 {
 					// enrich if the response is good.
 					pool.enrich(response.Msg.Answer)
 					if !doneCalled {

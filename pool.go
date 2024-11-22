@@ -125,7 +125,7 @@ func (pool *nameserverPool) status() NameserverPoolStatus {
 func newNameserverPool(nameservers []*dns.NS, extra []dns.RR) *nameserverPool {
 	pool := &nameserverPool{}
 
-	var ttl = MaxTTLAllowed
+	var ttl = MaxAllowedTTL
 	pool.hostsWithoutAddresses = make([]string, 0, len(nameservers))
 
 	for _, rr := range nameservers {
@@ -180,7 +180,7 @@ func (pool *nameserverPool) enrich(records []dns.RR) {
 	pool.updating.Lock()
 	defer pool.updating.Unlock()
 
-	var ttl = MaxTTLAllowed
+	var ttl = MaxAllowedTTL
 	hostnamesStillWithoutAddresses := make([]string, 0, len(pool.hostsWithoutAddresses))
 
 	for _, hostname := range pool.hostsWithoutAddresses {
@@ -237,7 +237,7 @@ func findAddressesForHostname(hostname string, records []dns.RR) ([]*dns.A, []*d
 	a := make([]*dns.A, 0, len(records))
 	aaaa := make([]*dns.AAAA, 0, len(records))
 
-	var ttl = MaxTTLAllowed
+	var ttl = MaxAllowedTTL
 
 	for _, rr := range records {
 		if canonicalName(rr.Header().Name) != hostname {

@@ -13,11 +13,13 @@ type Resolver struct {
 
 // The core, top level, resolving functions. They're defined as variables to aid overriding them for testing.
 type resolverFunctions struct {
-	resolveLabel     func(ctx context.Context, d *domain, z *zone, qmsg *dns.Msg, auth *authenticator) (*zone, *Response)
-	createZone       func(ctx context.Context, name string, nameservers []*dns.NS, extra []dns.RR, exchanger exchanger) (*zone, error)
-	finaliseResponse func(ctx context.Context, auth *authenticator, qmsg *dns.Msg, response *Response) *Response
-	cname            func(ctx context.Context, qmsg *dns.Msg, r *Response, exchanger exchanger) error
-	getExchanger     func() exchanger
+	resolveLabel         func(ctx context.Context, d *domain, z zone, qmsg *dns.Msg, auth *authenticator) (zone, *Response)
+	checkForMissingZones func(ctx context.Context, d *domain, z zone, rmsg *dns.Msg, auth *authenticator) zone
+	createZone           func(ctx context.Context, name, parent string, nameservers []*dns.NS, extra []dns.RR, exchanger exchanger) (zone, error)
+	finaliseResponse     func(ctx context.Context, auth *authenticator, qmsg *dns.Msg, response *Response) *Response
+	processDelegation    func(ctx context.Context, z zone, rmsg *dns.Msg) (zone, *Response)
+	cname                func(ctx context.Context, qmsg *dns.Msg, r *Response, exchanger exchanger) error
+	getExchanger         func() exchanger
 }
 
 func NewResolver() *Resolver {
@@ -28,9 +30,9 @@ func NewResolver() *Resolver {
 	}
 
 	z := new(zones)
-	z.add(&zone{
-		name: ".",
-		pool: pool,
+	z.add(&zoneImpl{
+		zoneName: ".",
+		pool:     pool,
 	})
 
 	resolver := &Resolver{
@@ -39,11 +41,13 @@ func NewResolver() *Resolver {
 
 	// When not testing, we point to the concrete instances of the functions.
 	resolver.funcs = resolverFunctions{
-		resolveLabel:     resolver.resolveLabel,
-		createZone:       createZone,
-		finaliseResponse: resolver.finaliseResponse,
-		cname:            cname,
-		getExchanger:     resolver.getExchanger,
+		resolveLabel:         resolver.resolveLabel,
+		checkForMissingZones: resolver.checkForMissingZones,
+		createZone:           createZone,
+		finaliseResponse:     resolver.finaliseResponse,
+		processDelegation:    resolver.processDelegation,
+		cname:                cname,
+		getExchanger:         resolver.getExchanger,
 	}
 
 	return resolver

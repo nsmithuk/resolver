@@ -10,7 +10,7 @@ import (
 func validateDelegatingResponse(ctx context.Context, r *result) (AuthenticationResult, error) {
 
 	// We extract any delegation DS records in the authority.
-	// Note that we'll look for DS records in teh answer if, and only if, the response it a positive answer.
+	// Note that we'll look for DS records in the answer if, and only if, the response it a positive answer.
 	r.dsRecords = r.authority.extractDSRecords()
 
 	// If signed DS records were found, then we're done here.

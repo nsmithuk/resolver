@@ -136,6 +136,19 @@ func recordsOfTypeExist(rr []dns.RR, t uint16) bool {
 	return false
 }
 
+func removeRecordsOfType(rr []dns.RR, t uint16) []dns.RR {
+	if len(rr) == 0 || !recordsOfTypeExist(rr, t) {
+		return rr
+	}
+	r := make([]dns.RR, 0, len(rr)-1) // -1 as we know at least one is the records we're removing.
+	for _, record := range rr {
+		if record.Header().Rrtype != t {
+			r = append(r, record)
+		}
+	}
+	return r
+}
+
 func extractRecordsOfType(rr []dns.RR, t uint16) []dns.RR {
 	r := make([]dns.RR, 0, len(rr))
 	for _, record := range rr {

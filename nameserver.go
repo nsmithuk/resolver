@@ -67,7 +67,7 @@ func (nameserver *nameserver) exchange(ctx context.Context, m *dns.Msg) *Respons
 		shortId := "unknown"
 		iteration := uint32(0)
 		if trace, _ := ctx.Value(CtxTrace).(*Trace); trace != nil {
-			shortId = trace.SortID()
+			shortId = trace.ShortID()
 			iteration = trace.Iteration()
 		}
 		Query(fmt.Sprintf(
@@ -86,7 +86,7 @@ func (nameserver *nameserver) exchange(ctx context.Context, m *dns.Msg) *Respons
 		go nameserver.updateMetrics(protocol, r.Duration)
 
 		// If we got an error back, we'll continue to maybe try again.
-		if r.Error() {
+		if r.HasError() {
 			continue
 		}
 

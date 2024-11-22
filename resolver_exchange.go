@@ -17,7 +17,8 @@ func (resolver *Resolver) Exchange(ctx context.Context, qmsg *dns.Msg) *Response
 		return ResponseError(ErrNotRecursionDesired)
 	}
 
-	// We'll copy the message as we'll want to amend some headers.
+	// We'll copy the message we'll likely want to mutate some values.
+	// And it might be confusing to the caller if the values in their instance change.
 	return resolver.exchange(ctx, qmsg.Copy())
 }
 
@@ -37,7 +38,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 	if !ok {
 		trace = newTraceWithStart(start)
 		ctx = context.WithValue(ctx, CtxTrace, trace)
-		Debug(fmt.Sprintf("New query started with Trace ID: %s", trace.SortID()))
+		Debug(fmt.Sprintf("New query started with Trace ID: %s", trace.ShortID()))
 	}
 
 	trace.Iterations.Add(1)
@@ -78,7 +79,7 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 		for i := 0; i < len(knownZones)-1; i++ {
 			// We never look directly at the first zone.
 			z := knownZones[i+1]
-			dsName := knownZones[i].name
+			dsName := knownZones[i].name()
 			auth.addDelegationSignerLink(z, dsName)
 		}
 	}
@@ -89,22 +90,33 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 	d := newDomain(qmsg.Question[0].Name)
 
 	// Wind past all the zones that we already know about (if any).
-	if err := d.windTo(knownZones[0].name); err != nil {
+	if err := d.windTo(knownZones[0].name()); err != nil {
 		return ResponseError(err)
 	}
 
 	var response *Response
 
 	// We track the last zone, as that's were we pass the query for the next label.
-	last := knownZones[0]
+	var z zone = knownZones[0]
 
-	for ; !d.end(); d.next() {
+	for ; d.more(); d.next() {
 		if counter.Add(1) > MaxQueriesPerRequest {
-			return ResponseError(fmt.Errorf("too many iterations"))
+			return ResponseError(fmt.Errorf("%w. value is currently set to: %d", ErrMaxQueriesPerRequestReached, MaxQueriesPerRequest))
 		}
 
-		last, response = resolver.funcs.resolveLabel(ctx, &d, last, qmsg, auth)
+		c := d.current()
+		if next := resolver.zones.get(c); next != nil && !d.last() {
+			// If we already know the zone, we don't need to resolve it.
+			// So as long as we're not trying to resolve the actually QName (i.e. the last part of the domain)
+			// Then we can continue.
+			z = next
+			continue
+		}
+
+		z, response = resolver.funcs.resolveLabel(ctx, &d, z, qmsg, auth)
+
 		if response != nil {
+			Debug(fmt.Sprintf("counter at end of exchange for iteration %d is %d", trace.Iterations.Load(), counter.Load()))
 			return response
 		}
 	}
@@ -112,59 +124,78 @@ func (resolver *Resolver) exchange(ctx context.Context, qmsg *dns.Msg) *Response
 	return ResponseError(ErrUnableToResolveAnswer)
 }
 
-func (resolver *Resolver) resolveLabel(ctx context.Context, d *domain, z *zone, qmsg *dns.Msg, auth *authenticator) (*zone, *Response) {
-	c := d.current()
-
-	if next := resolver.zones.get(c); next != nil {
-		// If we already know of the zone for the current name, and there are still more labels in teh QName
-		// to check, then we can return where.
-		// Note that the DS records will already have been requested in Step 1.
-		if d.more() {
-			return next, nil
-		}
-	}
-
+func (resolver *Resolver) resolveLabel(ctx context.Context, d *domain, z zone, qmsg *dns.Msg, auth *authenticator) (zone, *Response) {
 	if z == nil {
-		// This is a sense check; it _should_ never happen.
-		return nil, ResponseError(fmt.Errorf("%w: zone cannot be nil at this point", ErrInternalError))
+		// We must have a zone passed.
+		return nil, ResponseError(fmt.Errorf("%w: zone cannot be nil", ErrInternalError))
 	}
 
 	if auth != nil {
 		// If we're going to need the DNSKEY, we can pre-fetch it.
-		go z.dnsKeys(ctx)
+		go z.dnskeys(ctx)
 	}
 
-	response := z.Exchange(ctx, qmsg)
+	response := z.exchange(ctx, qmsg)
 
-	if !response.Empty() {
+	if !response.IsEmpty() {
 		response.Msg.RecursionAvailable = true
 	}
 
-	if response.Error() {
+	if response.HasError() {
 		return nil, response
 	}
 
-	if response.Empty() {
-		return nil, ResponseError(fmt.Errorf("nil was returned from the exchange, without an error. mysterious"))
+	if response.IsEmpty() {
+		return nil, ResponseError(fmt.Errorf("%w - without an error. mysterious", ErrEmptyResponse))
 	}
 
 	//---
 
-	records := append(response.Msg.Ns, response.Msg.Answer...)
+	z = resolver.funcs.checkForMissingZones(ctx, d, z, response.Msg, auth)
+
+	//---
+
+	if auth != nil {
+		auth.addResponse(z, response.Msg)
+	}
+
+	if len(response.Msg.Answer) == 0 && recordsOfTypeExist(response.Msg.Ns, dns.TypeNS) && !recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
+		return resolver.funcs.processDelegation(ctx, z, response.Msg)
+	}
+
+	response = resolver.funcs.finaliseResponse(ctx, auth, qmsg, response)
+	return nil, response
+
+}
+
+func (resolver *Resolver) checkForMissingZones(ctx context.Context, d *domain, z zone, rmsg *dns.Msg, auth *authenticator) zone {
+	records := append(rmsg.Ns, rmsg.Answer...)
 	if len(records) == 0 {
-		return nil, &Response{
-			Err: fmt.Errorf("no records found. we don't know where to go next"),
+		return z
+	}
+
+	// We're trying to best-effort optimise here, so we'll just pick one `nextRecordsOwner`.
+	// The best options is:
+	// 	1 - A child of the current zone; and
+	//	2 - Has the largest label count.
+
+	// TODO: ignore DOE records below?
+
+	nextRecordsOwner := "."
+	for _, record := range records {
+		option := record.Header().Name
+		if nextRecordsOwner != option && dns.IsSubDomain(z.name(), option) && dns.CountLabel(option) > dns.CountLabel(nextRecordsOwner) {
+			nextRecordsOwner = option
 		}
 	}
 
-	nextRecordsOwner := canonicalName(records[0].Header().Name)
-
-	// We expect the zone name to be a subdomain of the current zone (and also not the same as the current zone).
-	if !dns.IsSubDomain(z.name, nextRecordsOwner) {
-		return nil, &Response{
-			Err: fmt.Errorf("unexpected next zone name [%s] after [%s]", nextRecordsOwner, z.name),
-		}
+	// Then no options could be found.
+	if nextRecordsOwner == "." {
+		return z
 	}
+
+	// d.current() here is the domain we're expecting.
+	// So if it's not what we get, we expect it to be included in the missing zones slice.
 
 	missingZoneNames := d.gap(nextRecordsOwner)
 	for _, missingDomain := range missingZoneNames {
@@ -174,11 +205,10 @@ func (resolver *Resolver) resolveLabel(ctx context.Context, d *domain, z *zone, 
 		// If a SOA was found, then the missingDomain is its own zone.
 		if err == nil && soa != nil {
 
-			newZone := z.clone(missingDomain)
-			newZone.parent = z.name
+			newZone := z.clone(missingDomain, z.name())
 
 			if auth != nil {
-				auth.addDelegationSignerLink(z, newZone.name)
+				auth.addDelegationSignerLink(z, newZone.name())
 			}
 
 			resolver.zones.add(newZone)
@@ -190,35 +220,32 @@ func (resolver *Resolver) resolveLabel(ctx context.Context, d *domain, z *zone, 
 		d.next()
 	}
 
-	//---
+	return z
+}
 
-	if auth != nil {
-		auth.addResponse(z, response.Msg)
-	}
-
-	if response.Msg.Authoritative || recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) || !recordsOfTypeExist(response.Msg.Ns, dns.TypeNS) {
-		response = resolver.funcs.finaliseResponse(ctx, auth, qmsg, response)
-		return nil, response
-	}
-
-	//---
-
+func (resolver *Resolver) processDelegation(ctx context.Context, z zone, rmsg *dns.Msg) (zone, *Response) {
 	// Otherwise - onwards to the next zone...
-	nameservers := extractRecords[*dns.NS](response.Msg.Ns)
+	nameservers := extractRecords[*dns.NS](rmsg.Ns)
 
 	if len(nameservers) == 0 {
 		return nil, &Response{
-			Err: fmt.Errorf("no delegation nameservers found. we don't know where to go next"),
+			Err: fmt.Errorf("%w in the response from zone [%s]", ErrNextNameserversNotFound, z.name()),
 		}
 	}
 
 	nextZoneName := canonicalName(nameservers[0].Header().Name)
 
-	newZone, err := resolver.funcs.createZone(ctx, nextZoneName, nameservers, response.Msg.Extra, resolver.funcs.getExchanger())
+	if nextZoneName == z.name() || !dns.IsSubDomain(z.name(), nextZoneName) {
+		return nil, &Response{
+			Err: fmt.Errorf("%w: unexpected zone [%s] after [%s]", ErrNextNameserversNotFound, nextZoneName, z.name()),
+		}
+	}
+
+	newZone, err := resolver.funcs.createZone(ctx, nextZoneName, z.name(), nameservers, rmsg.Extra, resolver.funcs.getExchanger())
 	if err != nil {
 		return nil, ResponseError(err)
 	}
-	newZone.parent = z.name
+
 	resolver.zones.add(newZone)
 
 	return newZone, nil
@@ -258,7 +285,10 @@ func (resolver *Resolver) finaliseResponse(ctx context.Context, auth *authentica
 	if RemoveAdditionalSectionForPositiveAnswers && len(response.Msg.Answer) > 0 && !recordsOfTypeExist(response.Msg.Ns, dns.TypeSOA) {
 		var opt *dns.OPT
 		for _, extra := range response.Msg.Extra {
-			opt, _ = extra.(*dns.OPT)
+			if r, ok := extra.(*dns.OPT); ok {
+				opt = r
+				break
+			}
 		}
 
 		if opt != nil {

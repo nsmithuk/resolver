@@ -15,7 +15,7 @@ import (
 
 func TestZone_Exchange_NilPool(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 
 	// Prepare a DNS message
 	msg := new(dns.Msg)
@@ -23,7 +23,7 @@ func TestZone_Exchange_NilPool(t *testing.T) {
 	ctx := context.TODO()
 
 	// Execute
-	response := z.Exchange(ctx, msg)
+	response := z.exchange(ctx, msg)
 
 	// Assertions: Should return an error since the pool is nil
 	assert.ErrorIs(t, response.Err, ErrNoPoolConfiguredForZone)
@@ -31,7 +31,7 @@ func TestZone_Exchange_NilPool(t *testing.T) {
 
 func TestZone_Exchange_WithPool(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
@@ -50,7 +50,7 @@ func TestZone_Exchange_WithPool(t *testing.T) {
 	mockPool.On("exchange", ctxMatcher, msg).Return(expectedResponse)
 
 	// Execute
-	response := z.Exchange(ctx, msg)
+	response := z.exchange(ctx, msg)
 
 	// Assertions: Should return the result from the pool
 	assert.NoError(t, response.Err)
@@ -65,31 +65,31 @@ func TestZone_Exchange_WithPool(t *testing.T) {
 
 func TestZone_Clone(t *testing.T) {
 	// Setup
-	originalZone := &zone{name: "example.com."}
+	originalZone := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	originalZone.pool = mockPool
 
 	// Execute: Clone the zone with a new name
-	clonedZone := originalZone.clone("newzone.com.")
+	clonedZone := originalZone.clone("newzone.com.", "com.")
 
 	// Assertions: The new zone should have a new name but share the same pool
-	assert.Equal(t, "newzone.com.", clonedZone.name)
-	assert.Equal(t, originalZone.pool, clonedZone.pool)
+	assert.Equal(t, "newzone.com.", clonedZone.name())
+	assert.Equal(t, originalZone.pool, clonedZone.(*zoneImpl).pool)
 
-	assert.Empty(t, clonedZone.dnskeys)
-	assert.Empty(t, clonedZone.dnskeyExpiry)
+	assert.Empty(t, clonedZone.(*zoneImpl).dnskeyRecords)
+	assert.Empty(t, clonedZone.(*zoneImpl).dnskeyExpiry)
 }
 
 func TestZone_DNSKeys_CachedAndValid(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockRR := []dns.RR{&dns.DNSKEY{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: 300}}}
-	z.dnskeys = mockRR
+	z.dnskeyRecords = mockRR
 	z.dnskeyExpiry = time.Now().Add(time.Hour) // Keys are still valid
 
 	// Execute
 	ctx := context.TODO()
-	keys, err := z.dnsKeys(ctx)
+	keys, err := z.dnskeys(ctx)
 
 	// Assertions: Should return the cached keys and no error
 	assert.NoError(t, err)
@@ -98,7 +98,7 @@ func TestZone_DNSKeys_CachedAndValid(t *testing.T) {
 
 func TestZone_DNSKeys_Expired(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
@@ -116,7 +116,7 @@ func TestZone_DNSKeys_Expired(t *testing.T) {
 
 	// Execute
 	ctx := context.TODO()
-	keys, err := z.dnsKeys(ctx)
+	keys, err := z.dnskeys(ctx)
 
 	// Assertions: Should return the new keys and no error
 	assert.NoError(t, err)
@@ -126,7 +126,7 @@ func TestZone_DNSKeys_Expired(t *testing.T) {
 
 func TestZone_DNSKeys_NilResponse(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
@@ -136,14 +136,14 @@ func TestZone_DNSKeys_NilResponse(t *testing.T) {
 	// Mock the exchange function
 	mockPool.On("exchange", mock.Anything, mock.AnythingOfType("*dns.Msg")).Return(expectedResponse)
 
-	keys, err := z.dnsKeys(context.TODO())
+	keys, err := z.dnskeys(context.TODO())
 	assert.Nil(t, keys)
 	assert.ErrorIs(t, err, ErrFailedToGetDNSKEYs)
 }
 
 func TestZone_DNSKeys_ErrorResponse(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
@@ -159,7 +159,7 @@ func TestZone_DNSKeys_ErrorResponse(t *testing.T) {
 	// Mock the exchange function
 	mockPool.On("exchange", mock.Anything, mock.AnythingOfType("*dns.Msg")).Return(expectedResponse)
 
-	keys, err := z.dnsKeys(context.TODO())
+	keys, err := z.dnskeys(context.TODO())
 	assert.Nil(t, keys)
 	assert.ErrorIs(t, err, ErrFailedToGetDNSKEYs)
 	assert.ErrorIs(t, err, ErrTest)
@@ -167,7 +167,7 @@ func TestZone_DNSKeys_ErrorResponse(t *testing.T) {
 
 func TestZone_DNSKeys_EmptyAnswer(t *testing.T) {
 	// Setup
-	z := &zone{name: "example.com."}
+	z := &zoneImpl{zoneName: "example.com."}
 	mockPool := new(MockExpiringExchanger)
 	z.pool = mockPool
 
@@ -180,7 +180,7 @@ func TestZone_DNSKeys_EmptyAnswer(t *testing.T) {
 	// Mock the exchange function
 	mockPool.On("exchange", mock.Anything, mock.AnythingOfType("*dns.Msg")).Return(expectedResponse)
 
-	keys, err := z.dnsKeys(context.TODO())
+	keys, err := z.dnskeys(context.TODO())
 	assert.Nil(t, keys)
 	assert.NoError(t, err)
 
